@@ -1,0 +1,8 @@
+# Gameplay reference material (recordings and screenshots: large, and not ours to publish).
+references/
+*.mp4
+
+node_modules/
+dist/
+.env
+*.log

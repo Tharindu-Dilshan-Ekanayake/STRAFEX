@@ -1,0 +1,1073 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-pixel: 'Fredoka', system-ui, 'Segoe UI', sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+  font-family: 'Fredoka', system-ui, 'Segoe UI', sans-serif;
+  font-weight: 600;
+  -webkit-font-smoothing: antialiased;
+  /* HUD unit: one pixel of a 1600x900 layout, scaled to the screen, floored for phones. */
+  --u: clamp(0.62px, min(100vw / 1600, 100vh / 900), 1.35px);
+}
+
+@media (orientation: portrait) {
+  :root {
+    --u: clamp(0.5px, min(100vw / 900, 100vh / 1600), 1.2px);
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  background: #7fd0ff;
+}
+
+canvas {
+  display: block;
+  touch-action: none;
+}
+
+.pixelated {
+  image-rendering: pixelated;
+}
+
+/* Outlined pixel text that reads on any background. */
+.txt-o {
+  --o: max(1px, calc(var(--u) * 2));
+  color: #fff;
+  text-shadow:
+    var(--o) 0 0 #1a1230,
+    calc(var(--o) * -1) 0 0 #1a1230,
+    0 var(--o) 0 #1a1230,
+    0 calc(var(--o) * -1) 0 #1a1230,
+    var(--o) var(--o) 0 #1a1230,
+    calc(var(--o) * -1) var(--o) 0 #1a1230,
+    var(--o) calc(var(--o) * -1) 0 #1a1230,
+    calc(var(--o) * -1) calc(var(--o) * -1) 0 #1a1230,
+    0 calc(var(--u) * 4) calc(var(--u) * 2) rgba(0, 0, 0, 0.35);
+  letter-spacing: 0.02em;
+}
+
+/* Panels: rounded glass cards. */
+.mc-panel {
+  background: linear-gradient(180deg, rgba(46, 38, 84, 0.93), rgba(22, 18, 44, 0.93));
+  border: calc(var(--u) * 3) solid rgba(255, 255, 255, 0.14);
+  border-radius: calc(var(--u) * 18);
+  box-shadow:
+    0 calc(var(--u) * 10) calc(var(--u) * 28) rgba(10, 6, 30, 0.45),
+    inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Buttons: rounded, glossy, with a 3D lip they press down into. --c is the colour. */
+.mc-btn {
+  --c: #4a8f2c;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.32) 0%, rgba(255, 255, 255, 0.1) 46%, rgba(0, 0, 0, 0.06) 54%, rgba(0, 0, 0, 0.16) 100%),
+    var(--c);
+  border: calc(var(--u) * 3) solid rgba(16, 10, 34, 0.7);
+  border-radius: calc(var(--u) * 14);
+  box-shadow:
+    0 calc(var(--u) * 5) 0 rgba(16, 10, 34, 0.55),
+    0 calc(var(--u) * 8) calc(var(--u) * 14) rgba(0, 0, 0, 0.25),
+    inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, 0.45);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    transform 0.08s ease-out,
+    box-shadow 0.08s ease-out,
+    filter 0.12s;
+}
+.mc-btn:hover:not(:disabled) {
+  filter: brightness(1.12) saturate(1.05);
+  transform: translateY(calc(var(--u) * -1));
+}
+.mc-btn:active:not(:disabled) {
+  transform: translateY(calc(var(--u) * 4));
+  box-shadow:
+    0 calc(var(--u) * 1) 0 rgba(16, 10, 34, 0.55),
+    inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, 0.35);
+}
+.mc-btn:disabled {
+  filter: saturate(0.2) brightness(0.7);
+  cursor: default;
+}
+.mc-btn.picked {
+  outline: calc(var(--u) * 3) solid #fff;
+  outline-offset: calc(var(--u) * 2);
+  box-shadow:
+    0 0 calc(var(--u) * 18) rgba(255, 255, 255, 0.45),
+    0 calc(var(--u) * 5) 0 rgba(16, 10, 34, 0.55),
+    inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, 0.45);
+}
+
+/* Small rounded pills for counts and tags. */
+.chip {
+  display: inline-block;
+  padding: calc(var(--u) * 2) calc(var(--u) * 10);
+  border-radius: 999px;
+  background: rgba(10, 6, 30, 0.55);
+  border: calc(var(--u) * 2) solid rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-weight: 700;
+}
+.vote-count {
+  display: inline-block;
+  margin-top: calc(var(--u) * 2);
+  padding: calc(var(--u) * 1) calc(var(--u) * 10);
+  border-radius: 999px;
+  background: rgba(10, 6, 30, 0.4);
+  font-size: calc(var(--u) * 14);
+  font-weight: 700;
+  word-spacing: 0.2em;
+}
+
+.slot {
+  background: rgba(22, 18, 40, 0.72);
+  border: calc(var(--u) * 3) solid rgba(255, 255, 255, 0.14);
+  border-radius: calc(var(--u) * 10);
+  box-shadow: inset 0 calc(var(--u) * 3) calc(var(--u) * 6) rgba(0, 0, 0, 0.35);
+}
+.slot.sel {
+  border-color: #fff;
+  background: rgba(80, 70, 120, 0.85);
+  box-shadow:
+    0 0 calc(var(--u) * 12) rgba(255, 255, 255, 0.5),
+    inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, 0.15);
+}
+
+
+/* Names over players (placed every frame by Characters.jsx). */
+#nameplates {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.nameplate {
+  position: absolute;
+  left: 0;
+  top: 0;
+  text-align: center;
+  will-change: transform;
+}
+.np-name {
+  display: inline-block;
+  font-size: calc(var(--u) * 18);
+  padding: 0 calc(var(--u) * 8);
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  white-space: nowrap;
+}
+/* VIP names: gold. */
+.np-name.np-vip {
+  color: #ffd23b;
+  text-shadow: 0 0 calc(var(--u) * 6) rgba(255, 210, 59, 0.6);
+}
+
+/* The level badge beside a name. */
+.np-lvl {
+  display: none;
+  min-width: calc(var(--u) * 22);
+  margin-right: calc(var(--u) * 3);
+  padding: 0 calc(var(--u) * 4);
+  border-radius: calc(var(--u) * 6);
+  background: linear-gradient(#ffe36b, #e0a21b);
+  color: #2a1a00;
+  font-size: calc(var(--u) * 14);
+  font-weight: 700;
+  vertical-align: top;
+  line-height: calc(var(--u) * 22);
+}
+.np-bubble {
+  display: none;
+  max-width: calc(var(--u) * 260);
+  margin: 0 auto calc(var(--u) * 6);
+  padding: calc(var(--u) * 6) calc(var(--u) * 10);
+  background: #fff;
+  color: #1b1430;
+  font-size: calc(var(--u) * 16);
+  border: calc(var(--u) * 3) solid #0d0a18;
+  white-space: normal;
+}
+
+#hurt-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(200, 0, 0, 0.55) 100%);
+}
+
+@keyframes pop-in {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.pop-in {
+  animation: pop-in 0.35s ease-out both;
+}
+@keyframes fade-up {
+  0% {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  15% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-14px);
+    opacity: 0;
+  }
+}
+.fade-up {
+  animation: fade-up 2.6s ease-out both;
+}
+@keyframes pulse-red {
+  0%,
+  100% {
+    color: #ff5a3c;
+  }
+  50% {
+    color: #ffd23b;
+  }
+}
+.pulse-red {
+  animation: pulse-red 0.8s steps(2) infinite;
+}
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+.bob {
+  animation: bob 1.4s ease-in-out infinite;
+}
+
+/*
+ * The lobby menu: square tiles (icon over label), two to a row, on the left - narrow
+ * enough to stay clear of the vote panel in the middle on any screen.
+ */
+.lobby-menu {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: calc(var(--u) * 10);
+  top: 50%;
+  transform: translateY(-50%);
+}
+.menu-btn {
+  width: calc(var(--u) * 84);
+  height: calc(var(--u) * 84);
+  padding: calc(var(--u) * 6) calc(var(--u) * 4);
+  gap: calc(var(--u) * 5);
+}
+.menu-btn svg {
+  width: calc(var(--u) * 34) !important;
+  height: calc(var(--u) * 34) !important;
+}
+.menu-label {
+  font-size: calc(var(--u) * 13);
+  line-height: 1;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+@media (max-height: 520px) {
+  .lobby-menu {
+    top: calc(var(--u) * 70);
+    transform: none;
+  }
+}
+
+/* A soft darkening at the corners: draws the eye in, costs the GPU nothing. */
+.screen-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 62%, rgba(10, 6, 30, 0.28) 100%);
+}
+
+/* Your name tag, top right. */
+.name-tag {
+  display: flex;
+  align-items: center;
+}
+
+/* The lobby vote shrinks on short (landscape phone) screens. */
+@media (max-height: 520px) {
+  .vote-panel {
+    transform: scale(0.7);
+    transform-origin: top center;
+  }
+}
+
+/*
+ * Title text: a gradient fill over a thick dark outline, with a drop shadow. The text
+ * is drawn three times from data-text (layout, outline, fill), so it stays one string.
+ */
+.fancy {
+  --fs: calc(var(--u) * 30);
+  position: relative;
+  display: inline-block;
+  font-size: var(--fs);
+  font-family: 'Fredoka', system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  line-height: 1.15;
+  white-space: nowrap;
+  color: transparent;
+}
+.fancy::before,
+.fancy::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.fancy::before {
+  color: var(--st, #1a0f2e);
+  -webkit-text-stroke: calc(var(--fs) * 0.17) var(--st, #1a0f2e);
+  text-shadow: 0 calc(var(--fs) * 0.16) 0 rgba(0, 0, 0, 0.4);
+}
+.fancy::after {
+  background: linear-gradient(180deg, var(--f1, #ffffff) 0%, var(--f1, #ffffff) 35%, var(--f2, #ffd23b) 75%, var(--f2, #ffd23b) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Hotbar slots: bigger for fingers. */
+:root {
+  --slot: calc(var(--u) * 58);
+}
+@media (pointer: coarse) {
+  :root {
+    --slot: max(42px, calc(var(--u) * 74));
+  }
+}
+
+/* Hit marker: an X that flashes over the crosshair when your hit lands. */
+@keyframes hit-flash {
+  0% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.25);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+}
+#hitmarker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  opacity: 0;
+  pointer-events: none;
+}
+#hitmarker.on {
+  animation: hit-flash 0.28s ease-out both;
+}
+@keyframes dmg-rise {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 0) scale(0.6);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -10px) scale(1.15);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -60px) scale(1);
+  }
+}
+.dmg-num {
+  position: absolute;
+  pointer-events: none;
+  animation: dmg-rise 0.8s ease-out both;
+}
+@keyframes banner-in {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(1.6);
+  }
+  12% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+  }
+}
+.kill-banner {
+  animation: banner-in 2.4s ease-out both;
+}
+
+/* Touch buttons: round, glassy, pressed in when held. */
+.tbtn {
+  border-radius: 50%;
+  border: calc(var(--u) * 4) solid rgba(13, 10, 24, 0.85);
+  box-shadow:
+    inset 0 calc(var(--u) * 6) 0 rgba(255, 255, 255, 0.28),
+    inset 0 calc(var(--u) * -7) 0 rgba(0, 0, 0, 0.28),
+    0 calc(var(--u) * 5) 0 rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: transform 0.06s;
+}
+.tbtn:active,
+.tbtn.held {
+  transform: scale(0.92) translateY(2px);
+  filter: brightness(1.15);
+}
+
+/* --- Motion ---------------------------------------------------------------------------------
+ * Everything below animates only transform and opacity (compositor-only, no layout), and
+ * uses `backwards` fill on buttons so their own hover/press transforms still work after.
+ */
+
+/* Zone changes fade in from dark. */
+@keyframes zone-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+.zone-fade {
+  position: absolute;
+  inset: 0;
+  background: #0d0a18;
+  pointer-events: none;
+  opacity: 0;
+  animation: zone-fade 0.6s ease-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+.fade-in {
+  animation: fade-in 0.35s ease-out backwards;
+}
+
+/* The top title drops in when the phase changes. */
+@keyframes drop-in {
+  0% {
+    transform: translateY(calc(var(--u) * -30)) scale(0.9);
+    opacity: 0;
+  }
+  70% {
+    transform: translateY(calc(var(--u) * 3)) scale(1.03);
+    opacity: 1;
+  }
+  100% {
+    transform: none;
+  }
+}
+.drop-in {
+  animation: drop-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.2) backwards;
+}
+
+/* 3, 2, 1, GO! */
+@keyframes big-count {
+  0% {
+    transform: translate(-50%, -50%) scale(2.4);
+    opacity: 0;
+  }
+  18% {
+    transform: translate(-50%, -50%) scale(0.92);
+    opacity: 1;
+  }
+  30% {
+    transform: translate(-50%, -50%) scale(1.06);
+  }
+  42%,
+  75% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(0.7);
+    opacity: 0;
+  }
+}
+.big-count {
+  transform: translate(-50%, -50%);
+  animation: big-count 1s ease-out both;
+}
+@keyframes big-go {
+  0% {
+    transform: translate(-50%, -50%) scale(0.3) rotate(-8deg);
+    opacity: 0;
+  }
+  25% {
+    transform: translate(-50%, -50%) scale(1.15) rotate(3deg);
+    opacity: 1;
+  }
+  45%,
+  70% {
+    transform: translate(-50%, -50%) scale(1) rotate(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.8);
+    opacity: 0;
+  }
+}
+.big-count.big-go {
+  animation: big-go 1s ease-out both;
+}
+
+/* Vote cards come in one after another. */
+@keyframes card-in {
+  0% {
+    transform: translateY(calc(var(--u) * 24)) scale(0.85);
+    opacity: 0;
+  }
+  70% {
+    transform: translateY(calc(var(--u) * -3)) scale(1.02);
+    opacity: 1;
+  }
+  100% {
+    transform: none;
+  }
+}
+.vote-card {
+  animation: card-in 0.42s cubic-bezier(0.2, 0.9, 0.3, 1.2) backwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+
+/* A number that just changed. */
+@keyframes bump {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.3);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.bump {
+  display: inline-block;
+  animation: bump 0.3s ease-out;
+}
+
+/* The selected hotbar slot springs. */
+@keyframes slot-pick {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.16) translateY(calc(var(--u) * -3));
+  }
+  100% {
+    transform: scale(1.06) translateY(calc(var(--u) * -2));
+  }
+}
+.slot.sel {
+  transform: scale(1.06) translateY(calc(var(--u) * -2));
+  animation: slot-pick 0.22s ease-out;
+}
+
+/* Hearts: shake when hit, swell when healed, tremble when low. */
+@keyframes hearts-hurt {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(calc(var(--u) * -6));
+  }
+  40% {
+    transform: translateX(calc(var(--u) * 5));
+  }
+  60% {
+    transform: translateX(calc(var(--u) * -3));
+  }
+  80% {
+    transform: translateX(calc(var(--u) * 2));
+  }
+}
+.hearts-hurt {
+  animation: hearts-hurt 0.35s ease-out;
+}
+@keyframes heart-heal {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.25);
+  }
+}
+.hearts-heal img {
+  animation: heart-heal 0.4s ease-out;
+}
+@keyframes heart-low {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  25% {
+    transform: translateY(calc(var(--u) * -2));
+  }
+  75% {
+    transform: translateY(calc(var(--u) * 1));
+  }
+}
+img.heart-low {
+  animation: heart-low 0.45s steps(4) infinite;
+}
+
+/* Lobby menu buttons slide in from the left, one after another. */
+@keyframes slide-in-left {
+  from {
+    transform: translateX(calc(var(--u) * -60));
+    opacity: 0;
+  }
+}
+.lobby-menu > * {
+  animation: slide-in-left 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.15) backwards;
+}
+.lobby-menu > :nth-child(2) {
+  animation-delay: 40ms;
+}
+.lobby-menu > :nth-child(3) {
+  animation-delay: 80ms;
+}
+.lobby-menu > :nth-child(4) {
+  animation-delay: 120ms;
+}
+.lobby-menu > :nth-child(5) {
+  animation-delay: 160ms;
+}
+.lobby-menu > :nth-child(6) {
+  animation-delay: 200ms;
+}
+.lobby-menu > :nth-child(7) {
+  animation-delay: 240ms;
+}
+@keyframes slide-in-right {
+  from {
+    transform: translateX(calc(var(--u) * 50));
+    opacity: 0;
+  }
+}
+.slide-in-right {
+  animation: slide-in-right 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.15) backwards;
+}
+@keyframes slide-in-up {
+  from {
+    transform: translateY(calc(var(--u) * 40));
+    opacity: 0;
+  }
+}
+.slide-in-up {
+  animation: slide-in-up 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.15) backwards;
+}
+
+/* Round results. */
+@keyframes victory-title {
+  0% {
+    transform: scale(0.2) rotate(-12deg);
+    opacity: 0;
+  }
+  55% {
+    transform: scale(1.18) rotate(4deg);
+    opacity: 1;
+  }
+  75% {
+    transform: scale(0.96) rotate(-2deg);
+  }
+  100% {
+    transform: none;
+  }
+}
+@keyframes victory-glow {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+.victory-title {
+  animation:
+    victory-title 0.7s cubic-bezier(0.2, 0.9, 0.3, 1.2) backwards,
+    victory-glow 1.6s ease-in-out 0.7s infinite;
+}
+@keyframes shake-in {
+  0% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  55% {
+    transform: translateX(calc(var(--u) * -8));
+  }
+  70% {
+    transform: translateX(calc(var(--u) * 6));
+  }
+  85% {
+    transform: translateX(calc(var(--u) * -3));
+  }
+  100% {
+    transform: none;
+  }
+}
+.shake-in {
+  animation: shake-in 0.6s ease-out backwards;
+}
+@keyframes confetti {
+  0% {
+    transform: translate(0, -10vh) rotate(0);
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--dx), 105vh) rotate(var(--rot));
+    opacity: 0;
+  }
+}
+.confetti {
+  position: absolute;
+  top: 0;
+  border-radius: 2px;
+  animation: confetti 2.6s cubic-bezier(0.3, 0.6, 0.6, 1) both;
+}
+
+/* Players who prefer less motion get the information without the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .zone-fade,
+  .drop-in,
+  .vote-card,
+  .bump,
+  .slot.sel,
+  .hearts-hurt,
+  .hearts-heal img,
+  img.heart-low,
+  .lobby-menu > *,
+  .slide-in-right,
+  .slide-in-up,
+  .victory-title,
+  .shake-in,
+  .confetti,
+  .pop-in,
+  .fade-up,
+  .bob {
+    animation: none !important;
+  }
+  .zone-fade,
+  .confetti {
+    display: none;
+  }
+}
+
+/* Level up! */
+@keyframes level-up {
+  0% {
+    transform: translate(-50%, 0) scale(0.3);
+    opacity: 0;
+  }
+  12% {
+    transform: translate(-50%, 0) scale(1.15);
+    opacity: 1;
+  }
+  20%,
+  85% {
+    transform: translate(-50%, 0) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, calc(var(--u) * -30)) scale(0.95);
+    opacity: 0;
+  }
+}
+.level-up {
+  animation: level-up 4.2s ease-out both;
+}
+@keyframes xp-fill {
+  from {
+    transform: scaleX(0);
+  }
+}
+.xp-fill {
+  transform-origin: left center;
+  animation: xp-fill 0.9s cubic-bezier(0.2, 0.9, 0.3, 1) backwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .level-up,
+  .xp-fill {
+    animation: none !important;
+  }
+}
+
+/* --- Vote rows: one line on wide screens, a grid when there are many or the screen is narrow. */
+.vote-row {
+  display: flex;
+}
+.vote-maps {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+}
+
+/* --- Phones held upright ---------------------------------------------------------------------
+ * The same HUD, re-flowed for a tall, narrow screen: the corner buttons sit beside your name
+ * tag instead of under it, the title goes under that row, vote cards wrap three to a line,
+ * and the touch buttons and stick move up above the hotbar (which keeps the bottom edge).
+ */
+@media (orientation: portrait) {
+  .top-right {
+    flex-direction: row-reverse;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: flex-start;
+    max-width: calc(100vw - var(--u) * 28);
+  }
+  .top-right > .tr-feed {
+    /* The kill feed: its own line under the name tag. */
+    flex-basis: 100%;
+    align-items: flex-end;
+  }
+  .objective {
+    top: calc(var(--u) * 215) !important;
+    max-width: calc(100vw - var(--u) * 16);
+  }
+  .toasts {
+    top: calc(var(--u) * 300) !important;
+    max-width: calc(100vw - var(--u) * 16);
+    text-align: center;
+  }
+  .top-center {
+    top: calc(var(--u) * 110) !important;
+    max-width: calc(100vw - var(--u) * 16);
+  }
+  .vote-panel {
+    max-width: calc(100vw - var(--u) * 20);
+  }
+  .vote-modes {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .vote-modes > .vote-card {
+    width: auto !important;
+  }
+  .vote-maps > .vote-card {
+    width: calc(var(--u) * 200) !important;
+  }
+  .touch-cluster {
+    bottom: calc(var(--slot) + var(--u) * 80) !important;
+  }
+  .stick-ghost {
+    bottom: calc(var(--slot) + var(--u) * 90) !important;
+  }
+  .lobby-menu {
+    top: 44%;
+    transform: none;
+  }
+}
+
+/* --- Popups leave room for the portal's screen ads ----------------------------------------
+ * While a popup is open in the lobby, Boxity may show ads at the sides and along the bottom
+ * of the game. Popups stay inside the space between them, so an ad never covers one.
+ */
+:root {
+  --ad-side: 0px;
+  --ad-bottom: 0px;
+}
+@media (orientation: landscape) and (min-width: 900px) {
+  :root {
+    --ad-side: min(320px, 18vw);
+    --ad-bottom: 100px;
+  }
+}
+@media (orientation: landscape) and (max-height: 520px) {
+  :root {
+    --ad-side: min(220px, 22vw);
+    --ad-bottom: 76px;
+  }
+}
+@media (orientation: portrait) {
+  :root {
+    --ad-side: 0px;
+    --ad-bottom: 130px;
+  }
+}
+.panel-wrap {
+  box-sizing: border-box;
+  padding: 12px max(12px, var(--ad-side)) max(12px, var(--ad-bottom));
+}
+
+/* --- Touch layout (phones, tablets): smaller lobby buttons, nothing on top of anything --------
+ * Set by TouchControls (body.touch-ui). The lobby menu shrinks so it stays clear of the vote
+ * in the middle; the wallet moves to the bottom centre, away from the move stick.
+ */
+.touch-ui .wallet > * {
+  font-size: calc(var(--u) * 22) !important;
+}
+/* Short landscape phones: the vote shrinks a little more to clear the menu and name tag. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .touch-ui .vote-panel {
+    transform: scale(0.62);
+  }
+}
+
+/* --- Hotbar and hearts ----------------------------------------------------------------------
+ * The hotbar sits on a soft rounded tray, the hearts on a pill above it. On phones the slot
+ * size comes from the screen width, so the bar keeps a margin on both sides and never runs
+ * under the touch buttons.
+ */
+.hotbar {
+  padding: calc(var(--u) * 5);
+  background: rgba(13, 10, 24, 0.42);
+  border: calc(var(--u) * 2) solid rgba(255, 255, 255, 0.1);
+  border-radius: calc(var(--u) * 16);
+  box-shadow: 0 calc(var(--u) * 6) calc(var(--u) * 16) rgba(0, 0, 0, 0.25);
+}
+.hearts-row > :first-child {
+  width: auto !important;
+  padding: calc(var(--u) * 3) calc(var(--u) * 10);
+  background: rgba(13, 10, 24, 0.42);
+  border-radius: 999px;
+}
+@media (orientation: portrait) {
+  .touch-ui {
+    /* Nine slots across the screen less a 14 px margin each side, the tray and gaps. */
+    --slot: min(52px, calc((100vw - 28px - var(--u) * 48) / 9));
+  }
+  .touch-ui .bottom-bar {
+    padding-bottom: 10px !important;
+  }
+}
+@media (orientation: landscape) {
+  .touch-ui {
+    /* Centred between the move area and the action buttons (about 230u wide each). */
+    --slot: clamp(28px, calc((100vw - var(--u) * 490 - 24px) / 9), 48px);
+  }
+  .touch-ui .stick-ghost {
+    /* The stick hint sits above the hotbar's (and the lobby menu bar's) height. */
+    bottom: calc(var(--slot) + var(--u) * 70) !important;
+  }
+}
+/* Very short landscape screens (old small phones): the vote shrinks a little more. */
+@media (orientation: landscape) and (max-height: 340px) {
+  .touch-ui .vote-panel {
+    transform: scale(0.55);
+    /* Starts below the name tag's row. */
+    margin-top: calc(var(--u) * 34) !important;
+  }
+}
+
+/* --- Phones: the lobby menu is a bar at the bottom, like the hotbar in a round ---------------
+ * Same tray, same place, same tile size as the hotbar slots (--slot); short labels. The wallet
+ * sits just above it (where the hearts go in a round), the case prompt above that.
+ */
+.menu-label-short {
+  display: none;
+}
+.touch-ui .lobby-menu {
+  top: auto;
+  left: 50% !important;
+  transform: translateX(-50%);
+  bottom: 10px;
+  grid-template-columns: repeat(7, auto);
+  gap: calc(var(--u) * 3);
+  padding: calc(var(--u) * 5);
+  background: rgba(13, 10, 24, 0.42);
+  border: calc(var(--u) * 2) solid rgba(255, 255, 255, 0.1);
+  border-radius: calc(var(--u) * 16);
+  box-shadow: 0 calc(var(--u) * 6) calc(var(--u) * 16) rgba(0, 0, 0, 0.25);
+}
+.touch-ui .menu-btn {
+  width: var(--slot);
+  height: var(--slot);
+  padding: 2px;
+  gap: 1px;
+  border-radius: calc(var(--u) * 10);
+}
+.touch-ui .menu-btn svg {
+  width: calc(var(--slot) * 0.46) !important;
+  height: calc(var(--slot) * 0.46) !important;
+}
+.touch-ui .menu-label {
+  display: none;
+}
+.touch-ui .menu-label-short {
+  display: block;
+  font-size: max(7px, calc(var(--slot) * 0.19));
+  line-height: 1;
+  white-space: nowrap;
+}
+.touch-ui .wallet {
+  left: 50% !important;
+  bottom: calc(10px + var(--slot) + var(--u) * 22) !important;
+  transform: translateX(-50%);
+  flex-direction: row;
+  align-items: baseline;
+  gap: calc(var(--u) * 18) !important;
+}
+.touch-ui .station-prompt {
+  bottom: calc(10px + var(--slot) + var(--u) * 70) !important;
+}
+
+@media (orientation: landscape) and (max-height: 340px) {
+  /* No room for the stick's resting ring next to the vote: the stick still works anywhere
+     on the left, it just isn't drawn until you touch. */
+  .touch-ui .touch-root[data-zone='lobby'] .stick-ghost {
+    display: none;
+  }
+}
+
+/* Short landscape phones: the picture says what a mode is; its blurb would make the vote
+   too tall to fit between the name tag and the move stick. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .touch-ui .mode-blurb {
+    display: none;
+  }
+}
