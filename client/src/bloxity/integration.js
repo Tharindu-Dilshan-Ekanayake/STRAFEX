@@ -23,6 +23,7 @@ export const LEADERBOARDS = [
   { id: 'kills', label: 'Kills', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
   { id: 'games', label: 'Rounds Played', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
   { id: 'playtime', label: 'Minutes Played', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
+  { id: 'hits', label: 'Hits Landed', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
 ]
 
 /** Once per page, right after `Legion.SDK.init()`. */
@@ -217,6 +218,7 @@ function boardScores(profile) {
     kills: Math.floor(Number(profile?.kills) || 0),
     games: Math.floor(Number(profile?.games) || 0),
     playtime: Math.floor((Number(stats.playtime) || 0) / 60),
+    hits: Math.floor(Number(stats.hits) || 0),
   }
 }
 

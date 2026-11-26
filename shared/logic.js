@@ -53,7 +53,7 @@ export function createProfile(id, name) {
     /** Timed boosts: `{ xpUntil }` (ms timestamps). */
     boosts: {},
     quests: { day: -1, list: [] },
-    stats: { playtime: 0, bestKills: 0, bestCombo: 0, ffaKills: 0, cashEarned: 0, casesOpened: 0 },
+    stats: { playtime: 0, bestKills: 0, bestCombo: 0, ffaKills: 0, cashEarned: 0, casesOpened: 0, hits: 0 },
     createdAt: Date.now(),
     lastSeen: Date.now(),
   }
@@ -191,6 +191,8 @@ export function applyRoundResult(profile, { kind = 'duel', kills = 0, win = fals
   profile.stats.bestKills = Math.max(profile.stats.bestKills, kills)
   profile.stats.bestCombo = Math.max(profile.stats.bestCombo || 0, bestCombo)
   if (!duel) profile.stats.ffaKills = (profile.stats.ffaKills || 0) + kills
+  // Every hit landed (the Hits leaderboard).
+  profile.stats.hits = (profile.stats.hits || 0) + Math.max(0, Math.floor(hits))
   profile.stats.cashEarned += cash
 
   let xp = kills * XP.kill + Math.min(Math.floor(hits * XP.perHits), XP.maxHits) + (duel ? XP.play + (win ? XP.win : 0) : 0)

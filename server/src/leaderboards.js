@@ -2,9 +2,9 @@ import { saveProfile, topPlayers } from './db.js'
 import { activePlayers, broadcastAll } from './registry.js'
 
 const REFRESH_MS = 60_000
-let cached = { wins: [], kills: [], games: [], playtime: [], updatedAt: 0 }
+let cached = { wins: [], kills: [], games: [], playtime: [], hits: [], updatedAt: 0 }
 
-/** Latest top-10 boards (Wins, Kills, Rounds Played, Playtime). */
+/** Latest top-10 boards (Wins, Kills, Rounds Played, Playtime, Hits). */
 export function getLeaderboards() {
   return cached
 }

@@ -44,6 +44,9 @@ function actionFor(item, shield) {
   }
 }
 
+/** Thumbs held on a hit/use button, by button: dragging them turns the camera too. */
+const btnLook = {}
+
 export default function TouchControls() {
   const [enabled, setEnabled] = useState(isTouchDevice)
   const zone = useGame((s) => s.zone)
@@ -145,6 +148,43 @@ export default function TouchControls() {
     },
   })
 
+  /**
+   * Like `hold`, and the thumb on the button aims too: slide it while holding and the
+   * camera turns with it - hit (or block, or draw a bow) and aim with one thumb, no need
+   * to let go and turn first.
+   */
+  const holdLook = (key) => {
+    const h = hold(key)
+    return {
+      onTouchStart: (e) => {
+        h.onTouchStart(e)
+        const t = e.changedTouches[0]
+        if (t) btnLook[key] = { id: t.identifier, x: t.clientX, y: t.clientY }
+      },
+      onTouchMove: (e) => {
+        e.stopPropagation()
+        const s = btnLook[key]
+        if (!s) return
+        for (const t of e.changedTouches) {
+          if (t.identifier !== s.id) continue
+          const sens = useGame.getState().settings.sensitivity
+          runtime.input.lookX += (t.clientX - s.x) * LOOK_SPEED * sens
+          runtime.input.lookY += (t.clientY - s.y) * LOOK_SPEED * sens
+          s.x = t.clientX
+          s.y = t.clientY
+        }
+      },
+      onTouchEnd: (e) => {
+        h.onTouchEnd(e)
+        btnLook[key] = null
+      },
+      onTouchCancel: (e) => {
+        h.onTouchCancel(e)
+        btnLook[key] = null
+      },
+    }
+  }
+
   const item = ITEMS[heldId]
   // The use button follows the hand right click would use: the right, else the left.
   const use = actionFor(item, hasShield) || actionFor(offItem, false)
@@ -184,12 +224,12 @@ export default function TouchControls() {
         </button>
         {zone === 'match' && (
           <>
-            <button type="button" className={`tbtn absolute ${held.attack ? 'held' : ''}`} style={{ ...face(96, '216,68,58'), right: u(118), bottom: u(4) }} {...hold('attack')}>
+            <button type="button" className={`tbtn absolute ${held.attack ? 'held' : ''}`} style={{ ...face(96, '216,68,58'), right: u(118), bottom: u(4) }} {...holdLook('attack')}>
               <GameIcon name={attackIcon} size={36} />
               {label('HIT')}
             </button>
             {use && (
-              <button type="button" className={`tbtn absolute ${held.use ? 'held' : ''}`} style={{ ...face(88, use.color), right: u(128), bottom: u(114) }} {...hold('use')}>
+              <button type="button" className={`tbtn absolute ${held.use ? 'held' : ''}`} style={{ ...face(88, use.color), right: u(128), bottom: u(114) }} {...holdLook('use')}>
                 <GameIcon name={use.icon} size={32} />
                 {label(use.label, 12)}
               </button>
@@ -220,7 +260,7 @@ export default function TouchControls() {
           </>
         )}
         {zone === 'lobby' && (
-          <button type="button" className={`tbtn absolute ${held.attack ? 'held' : ''}`} style={{ ...face(80, '216,68,58'), right: u(118), bottom: u(8) }} {...hold('attack')}>
+          <button type="button" className={`tbtn absolute ${held.attack ? 'held' : ''}`} style={{ ...face(80, '216,68,58'), right: u(118), bottom: u(8) }} {...holdLook('attack')}>
             <GameIcon name="sword" size={30} />
             {label('SWING', 12)}
           </button>

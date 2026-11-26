@@ -112,8 +112,8 @@ test('an ad pays only when Boxity says the token is valid', async () => {
 test('leaderboard scores are whole numbers from the profile', () => {
   const p = createProfile('a', 'A')
   Object.assign(p, { wins: 12, kills: 34.7, games: 56 })
-  Object.assign(p.stats, { playtime: 3599 })
-  assert.deepEqual(leaderboardScores(p), { wins: 12, kills: 34, games: 56, playtime: 59 })
+  Object.assign(p.stats, { playtime: 3599, hits: 789.6 })
+  assert.deepEqual(leaderboardScores(p), { wins: 12, kills: 34, games: 56, playtime: 59, hits: 789 })
   assert.deepEqual(
     BLOXITY_LEADERBOARDS.map((b) => b.id),
     Object.keys(leaderboardScores(p)),
@@ -127,6 +127,7 @@ test('only changed scores are reported, as legion_<id>', () => {
     ['legion_a|kills', 2],
     ['legion_a|wins', 0],
     ['legion_a|games', 0],
+    ['legion_a|hits', 0],
   ])
   assert.deepEqual(changedScores([{ id: 'a', profile: p }], lastSent), [{ board: 'playtime', userId: 'legion_a', score: 0 }])
   assert.deepEqual(

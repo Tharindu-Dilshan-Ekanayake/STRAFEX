@@ -15,6 +15,13 @@ import { GameState, PlayerState } from './schema.js'
 /** Players per server (room). Full, and Legion's matchmaker starts another server. */
 const MAX_CLIENTS = 30
 const RECONNECT_SECONDS = 20
+/**
+ * Dropped out of Spirelands without pressing Lobby (a phone switching apps, a reload, a
+ * weak signal): coming back within this long puts you straight back in Spirelands.
+ */
+const FFA_RESUME_MS = 120_000
+/** playerId -> when they dropped out of Spirelands (cleared by pressing Lobby). */
+const ffaDropped = new Map()
 const AUTOSAVE_MS = 30_000
 /** The simulation: duels, Spirelands, bots, projectiles (GameHost). */
 const SIM_HZ = GameHost.SIM_HZ
@@ -85,6 +92,11 @@ export class GameRoom extends Room {
 
     this.onMessage('*', (client, type, payload) => {
       type = String(type)
+      // Pressing Lobby: a later rejoin starts in the lobby, as asked.
+      if (type === 'lobby') {
+        const m = this.members.get(client.sessionId)
+        if (m) ffaDropped.delete(m.playerId)
+      }
       if (HOST_MESSAGES.has(type)) return this.host.message(client.sessionId, type, payload || {})
       if (type === 'adReward') return this.handleAdReward(client, payload)
       if (type === 'gemsCheck') return this.handleGemsCheck(client)
@@ -139,6 +151,10 @@ export class GameRoom extends Room {
 
     session.sendProfile()
     this.host.join(sid, name, session.look())
+    // Dropped out of Spirelands a moment ago (not by pressing Lobby): straight back in.
+    const dropped = ffaDropped.get(playerId)
+    ffaDropped.delete(playerId)
+    if (dropped && now - dropped < FFA_RESUME_MS) this.host.message(sid, 'ffa', {})
     client.send('leaderboards', getLeaderboards())
     this.syncPlayer(sid)
     this.updateListing()
@@ -167,6 +183,12 @@ export class GameRoom extends Room {
 
   async onLeave(client) {
     const member = this.members.get(client.sessionId)
+    // In Spirelands when the connection went (not by pressing Lobby): remember, so a
+    // rejoin puts them back there.
+    if (member && !member.kicked && this.host.entOf(client.sessionId)?.arena === 'ffa') {
+      ffaDropped.set(member.playerId, Date.now())
+      for (const [id, at] of ffaDropped) if (Date.now() - at > FFA_RESUME_MS) ffaDropped.delete(id)
+    }
     // The host first: leaving mid-duel is a forfeit, a Spirelands life is paid out.
     this.host.leave(client.sessionId)
     this.state.players.delete(client.sessionId)

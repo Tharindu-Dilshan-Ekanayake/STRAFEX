@@ -233,8 +233,8 @@ export function QuestsPanel() {
 export function LeaderboardsPanel() {
   const boards = useGame((s) => s.leaderboards)
   const profile = useGame((s) => s.profile)
-  const [tab, setTab] = useState('wins')
-  const tabs = { wins: 'WINS', kills: 'KILLS', games: 'ROUNDS', playtime: 'MINUTES' }
+  const [tab, setTab] = useState('kills')
+  const tabs = { kills: 'KILLS', playtime: 'MINUTES', hits: 'HITS', wins: 'WINS', games: 'ROUNDS' }
   const rows = boards?.[tab] || []
   return (
     <div className="flex flex-col" style={{ gap: u(10) }}>
