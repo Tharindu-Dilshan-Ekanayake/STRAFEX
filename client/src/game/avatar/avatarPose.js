@@ -94,7 +94,7 @@ export function computePose(m) {
   const lean = sneak ? 0.45 : sprint * 0.12
   set('Spine1', lean, 0, swing * -0.25)
   const pitch = Math.max(-1.2, Math.min(1.2, m.pitch || 0))
-  set('Neck1', -pitch * 0.75 - lean * 0.8, 0, 0)
+  set('Neck1', -pitch * 0.75 - lean * 0.8, -(m.headTurn || 0), 0)
 
   pose.lift = sneak ? -0.1 : 0
   return pose

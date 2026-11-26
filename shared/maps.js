@@ -246,11 +246,14 @@ const ARENA_THEMES = {
 
 // --- Spirelands (free for all) ------------------------------------------------------------
 
-export const FFA_SIZE = { x: 192, y: 64, z: 192 }
+export const FFA_SIZE = { x: 256, y: 64, z: 256 }
 /** Spirelands' sea level: the water's top is one above. */
 export const FFA_SEA = 11
 /** About how far the island reaches from the middle before the sea. */
-const ISLAND_R = 70
+const ISLAND_R = 96
+/** Decoration counts were set for an island of radius 70: scaled to its area (or coast). */
+const AREA = (ISLAND_R / 70) ** 2
+const COAST = ISLAND_R / 70
 export const FFA_SEED = 20261126
 /** Spirelands' sky. */
 export const FFA_SKY = ['#3d8ff0', '#8fd0ff', '#d8f0ff']
@@ -389,7 +392,7 @@ export function generateSpirelands(seed = FFA_SEED) {
   built.push([CX, CZ, KEEP_R + 3])
 
   // --- The coast: palms along the beach, a pier, a shipwreck, a lighthouse, islets -------
-  for (let k = 0; k < 36; k += 1) {
+  for (let k = 0; k < Math.round(36 * COAST); k += 1) {
     const a = rng() * Math.PI * 2
     for (let r = ISLAND_R * 1.15; r > ISLAND_R * 0.6; r -= 1) {
       const x = Math.round(CX + Math.cos(a) * r)
@@ -528,7 +531,7 @@ export function generateSpirelands(seed = FFA_SEED) {
 
   // --- Slate spires: tall tapering columns, a balcony and a jump pad on many --------------
   const spires = []
-  for (let k = 0; k < 18; k += 1) {
+  for (let k = 0; k < Math.round(18 * AREA); k += 1) {
     const spot = randomLand(16)
     if (!spot) continue
     const [sx, sz] = spot
@@ -640,7 +643,7 @@ export function generateSpirelands(seed = FFA_SEED) {
   }
 
   // --- Ruins: broken stone-brick walls and arches ------------------------------------------
-  for (let k = 0; k < 11; k += 1) {
+  for (let k = 0; k < Math.round(11 * AREA); k += 1) {
     const spot = randomLand(14)
     if (!spot) continue
     const [rx, rz] = spot
@@ -669,7 +672,7 @@ export function generateSpirelands(seed = FFA_SEED) {
 
   // --- Trees, giant mushrooms, boulders, jump pads, flowers --------------------------------
   let pads = 0
-  for (let k = 0; k < 170; k += 1) {
+  for (let k = 0; k < Math.round(170 * AREA); k += 1) {
     const x = 12 + Math.floor(rng() * (SX - 24))
     const z = 12 + Math.floor(rng() * (SZ - 24))
     const g = top(x, z)
@@ -697,7 +700,8 @@ export function generateSpirelands(seed = FFA_SEED) {
       // Flowers grow in patches.
       const patch = n2(x * 1.7 + 50, z * 1.7) > 0.72
       const r = rng()
-      if (r < 0.05) world.set(x, g + 1, z, B.TALL_GRASS)
+      if (r < 0.0045) world.set(x, g + 1, z, B.BERRY_BUSH)
+      else if (r < 0.05) world.set(x, g + 1, z, B.TALL_GRASS)
       else if (patch && r < 0.3) world.set(x, g + 1, z, (x + z) % 2 ? B.FLOWER_RED : B.FLOWER_YELLOW)
       else if (r < 0.058) world.set(x, g + 1, z, rng() < 0.5 ? B.FLOWER_RED : B.FLOWER_YELLOW)
     }
@@ -705,7 +709,7 @@ export function generateSpirelands(seed = FFA_SEED) {
 
   // Spawn spots: open grass, away from everything built and each other.
   const spawns = []
-  for (let tries = 0; tries < 1500 && spawns.length < 24; tries += 1) {
+  for (let tries = 0; tries < 3000 && spawns.length < 36; tries += 1) {
     const x = 16 + Math.floor(rng() * (SX - 32))
     const z = 16 + Math.floor(rng() * (SZ - 32))
     const g = world.surface(x, z)
@@ -715,7 +719,21 @@ export function generateSpirelands(seed = FFA_SEED) {
     spawns.push({ x: x + 0.5, y: g + 1, z: z + 0.5 })
   }
   if (!spawns.length) spawns.push({ x: CX + 0.5, y: 21, z: CZ + 4.5 })
-  return { world, spawns, center: { x: CX + 0.5, y: 21, z: CZ + 4.5 } }
+
+  // Loot chests: on open ground all over the island (and the islets), spaced apart.
+  const chests = []
+  for (let tries = 0; tries < 4000 && chests.length < Math.round(30 * AREA); tries += 1) {
+    const x = 12 + Math.floor(rng() * (SX - 24))
+    const z = 12 + Math.floor(rng() * (SZ - 24))
+    const g = world.surface(x, z)
+    const ground = world.get(x, g, z)
+    if (g < 0 || (ground !== B.GRASS && ground !== B.SAND && ground !== B.STONE_BRICKS && ground !== B.MOSSY_BRICKS)) continue
+    if (g + 1 <= SEA || world.get(x, g + 1, z) !== B.AIR || world.get(x, g + 2, z) !== B.AIR) continue
+    if (chests.some((c) => Math.hypot(c.x - x, c.z - z) < 13) || spawns.some((s) => Math.hypot(s.x - x, s.z - z) < 4)) continue
+    world.set(x, g + 1, z, B.LOOT_CHEST)
+    chests.push({ x, y: g + 1, z })
+  }
+  return { world, spawns, chests, center: { x: CX + 0.5, y: 21, z: CZ + 4.5 } }
 }
 
 function set3(world, x, y, z, id) {

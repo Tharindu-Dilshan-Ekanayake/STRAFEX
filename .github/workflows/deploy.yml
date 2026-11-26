@@ -1,9 +1,9 @@
-# Ships Lucky Sky Brawl (Legion game id lucky-islands) to Bloxity Legion: the dev branch to the dev channel, main to prod.
+# Ships STRAFEX (Legion game id strafex) to Bloxity Legion: the dev branch to the dev channel, main to prod.
 #
 #   server   -> Docker image in this repo's GitHub Container Registry, then Legion rolls
-#               it out (https://lucky-islands.host.bloxity.io / .dev.host.bloxity.io)
-#   frontend -> the built client, served at https://lucky-islands.play.bloxity.io
-#               (prod) and https://lucky-islands.dev.play.bloxity.io (dev)
+#               it out (https://strafex.host.bloxity.io / .dev.host.bloxity.io)
+#   frontend -> the built client, served at https://strafex.play.bloxity.io
+#               (prod) and https://strafex.dev.play.bloxity.io (dev)
 #
 # Every push deploys to the production platform, and to the staging platform too once
 # its token exists. A manual run (Actions -> Run workflow) deploys any branch to the one
@@ -13,7 +13,7 @@
 #   LEGION_DEPLOY_TOKEN        production platform (required)
 #   LEGION_DEPLOY_TOKEN_STAGE  staging platform (optional; staging is skipped without it)
 # After the first run, make the ghcr.io package public so Legion can pull it
-# (repo -> Packages -> lucky-islands-server -> Package settings -> Change visibility).
+# (repo -> Packages -> strafex-server -> Package settings -> Change visibility).
 #
 # One client build works on every platform: the Bloxity SDK and the server find their
 # own environment at runtime, so no URL or environment goes into the build.
@@ -32,10 +32,10 @@ on:
         default: staging
 
 env:
-  GAME_ID: lucky-islands
+  GAME_ID: strafex
   # Seats per pod: the Colyseus room's maxClients (GameRoom.js MAX_CLIENTS). When a pod
   # fills to it, Legion's matchmaker starts another.
-  SEAT_CAP: 8
+  SEAT_CAP: 30
 
 concurrency:
   group: deploy-${{ github.ref_name }}

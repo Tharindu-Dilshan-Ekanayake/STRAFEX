@@ -88,6 +88,8 @@ export function installInput() {
 
   const onKeyDown = (e) => {
     if (e.target instanceof HTMLInputElement) return
+    // E (inventory, stations) lights up on the keystrokes display.
+    if (e.code === 'KeyE') input.interact = true
     const game = getGame()
     if (e.code === 'Escape' || (e.code === 'KeyE' && game.panel === 'inventory')) {
       if (game.quickChat) game.setQuickChat(false)
@@ -151,6 +153,7 @@ export function installInput() {
     }
   }
   const onKeyUp = (e) => {
+    if (e.code === 'KeyE') input.interact = false
     const key = KEYS[e.code]
     if (!key) return
     input[key] = false
@@ -184,6 +187,8 @@ export function installInput() {
   const onContextMenu = (e) => e.preventDefault()
   const onLockChange = () => {
     const isLocked = locked()
+    // The first capture this visit starts the "Press Esc to unlock the mouse" hint's 20 s.
+    if (isLocked && !runtime.firstLockAt) runtime.firstLockAt = performance.now()
     getGame().setPointerLocked(isLocked)
     if (!isLocked) {
       input.attack = false
@@ -192,6 +197,7 @@ export function installInput() {
   }
   const onBlur = () => {
     for (const key of Object.values(KEYS)) input[key] = false
+    input.interact = false
     input.attack = false
     input.use = false
   }

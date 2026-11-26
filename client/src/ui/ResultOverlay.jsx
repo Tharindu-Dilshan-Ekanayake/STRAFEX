@@ -54,7 +54,7 @@ function DuelOver({ over }) {
   return (
     <div className="fade-in absolute inset-0 z-20 flex items-center justify-center" style={{ background: win ? 'rgba(40,30,0,0.35)' : 'rgba(40,0,0,0.35)' }}>
       {win && <Confetti />}
-      <div className="mc-panel pop-in pointer-events-auto flex flex-col items-center text-center" style={{ padding: `${u(20)} ${u(32)}`, gap: u(10), minWidth: u(440) }}>
+      <div className="mc-gui pop-in pointer-events-auto flex flex-col items-center text-center" style={{ padding: `${u(20)} ${u(32)}`, gap: u(10), minWidth: u(440) }}>
         <div className={win ? 'victory-title' : 'shake-in'}>
           <Fancy size={56} from={win ? '#fff7b0' : '#ffd0c4'} to={win ? '#ffb21a' : '#ff3a2a'}>
             {win ? t('VICTORY!') : t('DEFEAT')}

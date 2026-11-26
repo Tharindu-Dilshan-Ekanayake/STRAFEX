@@ -1,9 +1,10 @@
 import { useEffect, useMemo } from 'react'
-import { BufferAttribute, BufferGeometry, DoubleSide, Group, Mesh, MeshBasicMaterial, Sphere, Vector3 } from 'three'
+import { BufferAttribute, BufferGeometry, Color, DoubleSide, Group, Mesh, MeshBasicMaterial, Sphere, Vector3 } from 'three'
 
 import { getQuality } from '../../store/quality'
 import { getAtlas } from '../art/atlas'
 import { SIZE, T } from '../art/atlasLayout'
+import { day } from '../dayNight'
 import { runtime } from '../runtime'
 import { CHUNK, onWorldChange, worldState } from '../world'
 import { meshChunk, out } from './mesher'
@@ -23,7 +24,16 @@ import { meshChunk, out } from './mesher'
  * Shared by both terrain materials: the time (wind and water), how hard the wind blows
  * (0 on LOW: nothing sways), and how strong the colour grade is.
  */
-const terrainUniforms = { uTime: { value: 0 }, uSway: { value: 0 }, uGrade: { value: 1 } }
+const terrainUniforms = {
+  uTime: { value: 0 },
+  uSway: { value: 0 },
+  uGrade: { value: 1 },
+  // Day and night: the sky light's brightness and tint, and how dark it is (the light
+  // of torches, campfires and lanterns is baked into the mesh; it shows in the dark).
+  uDay: { value: 1 },
+  uTint: { value: new Color(1, 1, 1) },
+  uNight: { value: 0 },
+}
 
 /**
  * The terrain shader, on top of three's unlit material:
@@ -42,29 +52,37 @@ attribute vec3 tile;
 uniform float uTime;
 uniform float uSway;
 varying vec2 vTileBase;
-varying vec2 vLocal;`,
+varying vec2 vLocal;
+varying float vBlock;`,
     )
     .replace(
       '#include <begin_vertex>',
       `#include <begin_vertex>
 vTileBase = tile.xy;
 vLocal = uv;
-if (tile.z > 0.5 && tile.z < 2.5 && uSway > 0.0) {
+// tile.z = motion (0-3) + 4 x block light (0-15).
+float motion = mod(tile.z, 4.0);
+vBlock = floor(tile.z / 4.0 + 0.01) / 15.0;
+if (motion > 0.5 && motion < 2.5 && uSway > 0.0) {
   // Each point sways by where it is, so neighbouring leaves move together (no gaps).
   float ph = position.x * 0.71 + position.z * 0.93 + position.y * 0.37;
-  float amp = tile.z > 1.5 ? 0.09 * uv.y : 0.035;
+  float amp = motion > 1.5 ? 0.09 * uv.y : 0.035;
   transformed.x += sin(uTime * 1.7 + ph) * amp * uSway;
   transformed.z += cos(uTime * 1.3 + ph * 1.3) * amp * 0.8 * uSway;
 }
-if (tile.z > 2.5) vLocal += vec2(uTime * 0.08, uTime * 0.05);`,
+if (motion > 2.5) vLocal += vec2(uTime * 0.08, uTime * 0.05);`,
     )
   shader.fragmentShader = shader.fragmentShader
     .replace(
       '#include <common>',
       `#include <common>
 uniform float uGrade;
+uniform float uDay;
+uniform vec3 uTint;
+uniform float uNight;
 varying vec2 vTileBase;
-varying vec2 vLocal;`,
+varying vec2 vLocal;
+varying float vBlock;`,
     )
     .replace(
       '#include <map_fragment>',
@@ -91,6 +109,10 @@ varying vec2 vLocal;`,
   float l = dot(c, vec3(0.299, 0.587, 0.114));
   vec3 graded = clamp((mix(vec3(l), c, 1.06) - 0.5) * 1.07 + 0.5, 0.0, 1.0);
   gl_FragColor.rgb = mix(c, graded, uGrade);
+  // Time of day: the sky's light (dimmer and bluer at night), plus the warm light of
+  // torches, campfires and lanterns (baked into the mesh) once it's dark.
+  vec3 lit = uTint * uDay + vec3(1.0, 0.76, 0.48) * (vBlock * vBlock * 1.3) * uNight;
+  gl_FragColor.rgb *= min(lit, vec3(1.2));
 }
 #include <tonemapping_fragment>`,
     )
@@ -187,8 +209,23 @@ function build(world, chunk) {
   upload(chunk.cutout, out.cutout)
 }
 
+/** The time of day, for the terrain shader. */
+function dayUniforms() {
+  const u = terrainUniforms
+  u.uDay.value = day.light
+  u.uTint.value.copy(day.tint)
+  u.uNight.value = day.night
+}
+
 /** Most chunk requests in flight at once (edits jump the queue). */
 const MAX_IN_FLIGHT = 6
+/**
+ * A busy chunk (players building, water flowing, fire) is re-meshed at most this often,
+ * and at most this many finished meshes go to the GPU a frame: with a full server at work
+ * no single frame does all the uploading (a hitch).
+ */
+const REMESH_GAP_MS = 100
+const UPLOADS_PER_FRAME = 3
 
 export default function Terrain() {
   const group = useMemo(() => new Group(), [])
@@ -209,11 +246,8 @@ export default function Terrain() {
         const m = e.data
         inFlight = Math.max(0, inFlight - 1)
         if (m.version !== version) return
-        const chunk = chunks.get(m.key)
-        // A newer request for this chunk is on its way: this one is already stale.
-        if (!chunk || chunk.seq !== m.seq) return
-        upload(chunk.solid, m.solid)
-        upload(chunk.cutout, m.cutout)
+        // Uploaded a few a frame (see UPLOADS_PER_FRAME); a newer mesh replaces a waiting one.
+        ready.set(m.key, m)
       }
       worker.onerror = (err) => {
         console.warn('[terrain] mesh worker failed, meshing in this thread', err)
@@ -264,8 +298,11 @@ export default function Terrain() {
       worldState.dirty.clear()
     }
 
+    /** Finished meshes waiting for the GPU, by chunk. */
+    const ready = new Map()
     const request = (chunk, key) => {
       chunk.seq = ++seq
+      chunk.reqAt = performance.now()
       inFlight += 1
       worker.postMessage({ mesh: { version, key, cx: chunk.cx, cz: chunk.cz, size: CHUNK, seq: chunk.seq } })
     }
@@ -278,6 +315,7 @@ export default function Terrain() {
       if (!world) return
       frame += 1
       if (frame % 15 === 0) cullFar(chunks)
+      if (frame % 6 === 0) dayUniforms()
       // Wind and water: the clock, and the preset's wind (none on LOW).
       const q = getQuality()
       terrainUniforms.uTime.value = (performance.now() / 1000) % 1000
@@ -289,11 +327,30 @@ export default function Terrain() {
           worker.postMessage({ edits: worldState.pendingEdits.slice() })
           worldState.pendingEdits.length = 0
         }
+        // Finished meshes to the GPU, a few a frame.
+        let uploads = 0
+        for (const [key, m] of ready) {
+          if (uploads >= UPLOADS_PER_FRAME) break
+          ready.delete(key)
+          const chunk = chunks.get(key)
+          // A newer request for this chunk is on its way: this one is already stale.
+          if (!chunk || chunk.seq !== m.seq) continue
+          upload(chunk.solid, m.solid)
+          upload(chunk.cutout, m.cutout)
+          uploads += 1
+        }
+        // Changed chunks: re-meshed at once, unless they were a moment ago (then shortly).
+        const nowMs = performance.now()
         for (const key of worldState.dirty) {
           const chunk = chunks.get(key)
-          if (chunk) request(chunk, key)
+          if (!chunk) {
+            worldState.dirty.delete(key)
+            continue
+          }
+          if (nowMs - (chunk.reqAt || 0) < REMESH_GAP_MS) continue
+          worldState.dirty.delete(key)
+          request(chunk, key)
         }
-        worldState.dirty.clear()
         while (queue.length && inFlight < MAX_IN_FLIGHT) {
           const key = queue.shift()
           const chunk = chunks.get(key)

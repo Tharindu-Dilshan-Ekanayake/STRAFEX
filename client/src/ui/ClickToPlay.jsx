@@ -3,9 +3,31 @@ import { useEffect } from 'react'
 import { requestPointerLock } from '../game/input'
 import { runtime } from '../game/runtime'
 import { useGame } from '../store/game'
-import { u } from './format'
+import { u, useNow } from './format'
 import { t } from './i18n'
 import { isTouchDevice } from './device'
+
+/** The Esc hint shows this long from the first time the mouse is captured (input.js notes when). */
+const ESC_HINT_MS = 20_000
+
+/**
+ * The first 20 seconds the mouse is captured: "Press Esc to unlock the mouse", at the top
+ * of the screen in Minecraft's chat style. Desktop only; gone for good after that.
+ */
+export function EscHint() {
+  const locked = useGame((s) => s.pointerLocked)
+  const touchUI = useGame((s) => s.touchUI)
+  const now = useNow(1000)
+  const first = runtime.firstLockAt
+  if (!locked || touchUI || runtime.input.touch || isTouchDevice() || !first || now - first > ESC_HINT_MS) return null
+  return (
+    <div className="esc-hint pointer-events-none absolute left-1/2 z-10 -translate-x-1/2" style={{ top: '18%' }}>
+      <div className="mc-hud mc-text" style={{ padding: `${u(6)} ${u(14)}`, fontSize: u(15) }}>
+        {t('Press')} <span style={{ color: '#ffff55' }}>ESC</span> {t('to unlock the mouse')}
+      </div>
+    </div>
+  )
+}
 
 /**
  * Desktop: clicking the 3D view captures the mouse (Esc lets it go, for the menus).
@@ -35,7 +57,7 @@ export default function ClickToPlay() {
   if (locked || panel || caseOpen || menu || touchUI || runtime.input.touch || isTouchDevice() || (result && result.kind !== 'over')) return null
   return (
     <div className="pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 text-center" style={{ top: '62%' }}>
-      <div className="mc-panel txt-o" style={{ padding: `${u(8)} ${u(18)}`, fontSize: u(20), opacity: 0.92 }}>
+      <div className="mc-hud txt-o" style={{ padding: `${u(8)} ${u(18)}`, fontSize: u(20) }}>
         {zone === 'match' ? t('CLICK TO PLAY') : t('CLICK TO LOOK AROUND')}
         <div style={{ fontSize: u(14), color: '#cfc6ee', marginTop: u(4) }}>
           {zone === 'match'

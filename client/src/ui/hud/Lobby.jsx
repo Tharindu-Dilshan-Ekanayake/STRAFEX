@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { CASES, MODES } from '@shared/balance'
+import { CASES, LOBBY_SWORD, MODES } from '@shared/balance'
 import { dailyStatus } from '@shared/logic'
 
+import { itemIcon } from '../../game/art/items'
 import { exitPointerLock } from '../../game/input'
 import { runtime } from '../../game/runtime'
 import { actions } from '../../net/actions'
@@ -11,7 +12,7 @@ import { useGame } from '../../store/game'
 import { formatCash, formatClock, u, useCountUp, useNow } from '../format'
 import { Button, Fancy } from '../kit'
 import { t } from '../i18n'
-import GameIcon from '../GameIcon'
+import PixelIcon from '../PixelIcon'
 
 /** The lobby HUD: play buttons and the queue, server fill, the menu, wallet and station prompts, the welcome gift. */
 
@@ -34,28 +35,45 @@ export function PlayerCount() {
   )
 }
 
-/** The title and the two ways to play. */
+/** Two of the game's own diamond swords, crossed. */
+function CrossedSwords({ size }) {
+  const src = itemIcon(LOBBY_SWORD)
+  return (
+    <span className="play-icon relative inline-block" style={{ width: size, height: size }} aria-hidden="true">
+      <img src={src} alt="" className="pixelated absolute inset-0" style={{ width: '100%', height: '100%' }} draggable={false} />
+      <img src={src} alt="" className="pixelated absolute inset-0" style={{ width: '100%', height: '100%', transform: 'scaleX(-1)' }} draggable={false} />
+    </span>
+  )
+}
+
+/** The title and the two ways to play: blocky buttons, pixel icons, Minecraft-style lettering. */
 export function PlayButtons() {
   const open = useGame((s) => s.openPanel)
   const phase = useGame((s) => s.phase)
   if (phase.queue) return null
   return (
     <div className="play-buttons pointer-events-auto flex flex-col items-center" style={{ gap: u(8) }}>
-      <div className="flex" style={{ gap: u(10) }}>
+      <div className="flex" style={{ gap: u(12) }}>
         <Button
           color="#e0a21b"
-          className="bob"
-          style={{ padding: `${u(10)} ${u(28)}`, fontSize: u(24), fontWeight: 700 }}
+          className="play-btn bob"
           onClick={() => {
             exitPointerLock()
             open('modes')
           }}
         >
-          ⚔ {t('PLAY DUELS')}
+          <CrossedSwords size={u(40)} />
+          <span className="flex flex-col items-start">
+            <span className="play-title">{t('PLAY DUELS')}</span>
+            <span className="play-sub">{t('1V1 · REAL PLAYERS')}</span>
+          </span>
         </Button>
-        <Button color="#3a6fd8" style={{ padding: `${u(10)} ${u(22)}`, fontSize: u(22), fontWeight: 700 }} onClick={() => actions.ffa()}>
-          {t('SPIRELANDS FFA')}
-          {phase.ffa ? <span style={{ fontSize: u(14), marginLeft: u(6), color: '#cfe6ff' }}>· {phase.ffa}</span> : null}
+        <Button color="#3a6fd8" className="play-btn bob" onClick={() => actions.ffa()}>
+          <PixelIcon name="spire" size={u(40)} />
+          <span className="flex flex-col items-start">
+            <span className="play-title">{t('SPIRELANDS FFA')}</span>
+            <span className="play-sub">{phase.ffa ? t('{n} FIGHTING', { n: phase.ffa }) : t('FREE FOR ALL')}</span>
+          </span>
         </Button>
       </div>
     </div>
@@ -69,36 +87,52 @@ export function QueueBar() {
   if (!phase.queue) return null
   const waited = Math.max(0, now - (phase.queuedSince || now))
   const m = MODES[phase.queue]
+  const inFfa = phase.kind === 'ffa'
+  // Waiting a while in the lobby: point at Spirelands (the search goes on in there).
+  const nudge = !inFfa && waited > 15000
   return (
-    <div className="queue-bar mc-panel pointer-events-auto flex items-center" style={{ gap: u(14), padding: `${u(8)} ${u(14)}` }}>
+    <div className="queue-bar mc-hud pointer-events-auto flex items-center" style={{ gap: u(14), padding: `${u(8)} ${u(14)}` }}>
       <span className="queue-spinner" />
-      <div className="flex flex-col">
-        <span className="txt-o" style={{ fontSize: u(20), fontWeight: 700 }}>
-          {t('SEARCHING FOR OPPONENT')} <span style={{ color: '#ffd23b' }}>{formatClock(waited)}</span>
+      <div className="flex flex-col" style={{ gap: u(4) }}>
+        <span className="mc-text" style={{ fontSize: u(18) }}>
+          {t('SEARCHING FOR OPPONENT')} <span style={{ color: '#ffff55' }}>{formatClock(waited)}</span>
         </span>
-        <span className="txt-o" style={{ fontSize: u(13), color: '#cfc6ee' }}>
-          {t('CASUAL')} · <span style={{ color: m?.color }}>{t(m?.name || '')}</span> {t('1v1')} · {t('{n} searching', { n: phase.searching?.[phase.queue] || 1 })}
+        <span className="txt-o" style={{ fontSize: u(13), color: '#e0e0e0' }}>
+          {t('CASUAL')} · <span style={{ color: m?.color }}>{t(m?.name || '')}</span> {t('1v1')} · {t('{n} searching', { n: Math.max(1, Object.values(phase.searching || {}).reduce((a, b) => a + b, 0)) })}
         </span>
       </div>
-      <Button color="#d8443a" style={{ padding: `${u(6)} ${u(14)}`, fontSize: u(16) }} onClick={() => actions.unqueue()}>
+      {!inFfa && (
+        <button
+          type="button"
+          className={`mc-stone ${nudge ? 'nudge' : ''}`}
+          style={{ padding: `${u(6)} ${u(12)}`, fontSize: u(12), lineHeight: 1.15 }}
+          title={t('Fight in Spirelands while you wait: you are pulled into the duel the moment an opponent is found')}
+          onClick={() => actions.ffa()}
+        >
+          {t('PLAY SPIRELANDS')}
+          <br />
+          <span style={{ fontSize: u(9), color: '#d6f0ff' }}>{t('WHILE YOU WAIT')}</span>
+        </button>
+      )}
+      <button type="button" className="mc-stone" style={{ padding: `${u(6)} ${u(14)}`, fontSize: u(14) }} onClick={() => actions.unqueue()}>
         {t('LEAVE QUEUE')}
-      </Button>
+      </button>
     </div>
   )
 }
 
-function MenuButton({ label, short, icon, color, badge, onClick }) {
+function MenuButton({ label, short, icon, badge, onClick }) {
   return (
-    <Button color={color} className="menu-btn relative flex flex-col items-center justify-center" onClick={onClick}>
-      <GameIcon name={icon} size={34} />
-      <span className="menu-label txt-o">{label}</span>
-      <span className="menu-label-short txt-o">{short || label}</span>
+    <button type="button" className="mc-stone menu-btn relative flex flex-col items-center justify-center" onClick={onClick}>
+      <PixelIcon name={icon} size={u(36)} className="" />
+      <span className="menu-label">{label}</span>
+      <span className="menu-label-short">{short || label}</span>
       {badge && (
         <span className="absolute flex items-center justify-center rounded-full bg-red-600" style={{ right: u(-10), top: u(-10), width: u(24), height: u(24), fontSize: u(15), border: `${u(3)} solid #0d0a18` }}>
           !
         </span>
       )}
-    </Button>
+    </button>
   )
 }
 
@@ -113,12 +147,12 @@ export function LobbyMenu() {
   }
   return (
     <div className="lobby-menu pointer-events-auto absolute" style={{ left: u(14), gap: u(12) }}>
-      <MenuButton label={t('SHOP')} icon="bag" color="#e0a21b" onClick={() => go('shop')} />
-      <MenuButton label={t('CASES')} icon="chest" color="#c25cff" onClick={() => go('cases', { caseId: 'cape' })} />
-      <MenuButton label={t('BACKPACK')} short={t('BAG')} icon="backpack" color="#b0633a" onClick={() => go('backpack')} />
-      <MenuButton label={t('DAILY')} icon="gift" color="#3fa2ff" badge={dailyReady} onClick={() => go('daily')} />
-      <MenuButton label={t('QUESTS')} icon="scroll" color="#e0702b" onClick={() => go('quests')} />
-      <MenuButton label={t('TOP')} icon="trophy" color="#2bb3a3" onClick={() => go('leaderboards')} />
+      <MenuButton label={t('SHOP')} icon="shop" onClick={() => go('shop')} />
+      <MenuButton label={t('CASES')} icon="chest" onClick={() => go('cases', { caseId: 'cape' })} />
+      <MenuButton label={t('BACKPACK')} short={t('BAG')} icon="backpack" onClick={() => go('backpack')} />
+      <MenuButton label={t('DAILY')} icon="gift" badge={dailyReady} onClick={() => go('daily')} />
+      <MenuButton label={t('QUESTS')} icon="scroll" onClick={() => go('quests')} />
+      <MenuButton label={t('TOP')} icon="trophy" onClick={() => go('leaderboards')} />
     </div>
   )
 }
@@ -129,10 +163,10 @@ export function Wallet() {
   const shown = useCountUp(cash)
   return (
     <div className="wallet slide-in-up absolute flex flex-col" style={{ left: u(14), bottom: u(14), gap: u(6) }}>
-      <div className="txt-o" style={{ fontSize: u(28), fontWeight: 700, color: '#ffd23b' }}>
+      <div className="mc-text" style={{ fontSize: u(26), color: '#ffff55' }}>
         👑 {wins}
       </div>
-      <div key={cash} className="txt-o bump" style={{ fontSize: u(30), fontWeight: 700, color: '#7cff6b', transformOrigin: 'left center' }}>
+      <div key={cash} className="mc-text bump" style={{ fontSize: u(28), color: '#55ff55', transformOrigin: 'left center' }}>
         {formatCash(shown)}
       </div>
     </div>

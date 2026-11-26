@@ -21,7 +21,9 @@ import { quickBubble } from '../net/quickChat'
 import { getGame } from '../store/game'
 import { getQuality } from '../store/quality'
 import { itemModel } from './art/items'
+import { bodyTurn } from './avatar/bodyTurn'
 import { avatarShown } from './avatar/state'
+import { day } from './dayNight'
 import { runtime } from './runtime'
 
 /**
@@ -91,6 +93,7 @@ const v = new Vector3()
 const s = new Vector3()
 const tint = new Color()
 const HURT = new Color('#ff5050')
+const BURN = new Color('#ff7a1a')
 const handMatrix = new Matrix4()
 const offHandMatrix = new Matrix4()
 const bodyPivot = new Matrix4()
@@ -134,9 +137,9 @@ function itemBatches(group) {
 }
 
 /** Matrix for a box `w x h x d` hanging from `pivot` (top centre) rotated by (rx, 0, rz). */
-function limb(out, base, px, py, pz, rx, rz, w, h, d, ox = 0, oy = -h / 2, oz = 0) {
+function limb(out, base, px, py, pz, rx, rz, w, h, d, ox = 0, oy = -h / 2, oz = 0, ry = 0) {
   tmp.position.set(px, py, pz)
-  tmp.rotation.set(rx, 0, rz)
+  tmp.rotation.set(rx, ry, rz)
   tmp.scale.set(1, 1, 1)
   tmp.updateMatrix()
   pivot.multiplyMatrices(base, tmp.matrix)
@@ -188,6 +191,7 @@ export default function Characters() {
     let n = 0
     const list = drawList(q8.remoteDrawDistance, camera)
     const shown = Math.min(MAX, q8.maxFigures || MAX)
+    partMaterial.color.copy(day.tint).multiplyScalar(day.active ? day.light : 1)
     items.begin()
     for (let i = 0; i < list.length && i < shown; i += 1) {
       const c = list[i]
@@ -204,7 +208,10 @@ export default function Characters() {
       const blocking = c.anim === 5 && !offShield
       // Root: feet at (x, y, z), facing yaw.
       tmp.position.set(c.x, c.y, c.z)
-      tmp.rotation.set(0, c.yaw, 0)
+      // Walking, the whole figure turns to face the way it's going (head and all).
+      c.turn ||= {}
+      const turnOff = bodyTurn(c.turn, c.x, c.z, c.yaw, now)
+      tmp.rotation.set(0, c.yaw + turnOff, 0)
       tmp.scale.set(1, 1, 1)
       tmp.updateMatrix()
       root.copy(tmp.matrix)
@@ -223,6 +230,7 @@ export default function Characters() {
         parts.setMatrixAt(n, matrix)
         tint.copy(color)
         if (hurt) tint.lerp(HURT, 0.6)
+        else if (c.burning) tint.lerp(BURN, 0.3 + 0.2 * Math.sin(now / 55))
         parts.setColorAt(n, tint)
         n += 1
       }
@@ -353,6 +361,8 @@ function drawList(maxDist, camera) {
     e.held = runtime.zone === 'match' ? runtime.me.inv?.[runtime.me.sel]?.id || 'fist' : runtime.zone === 'lobby' ? LOBBY_SWORD : 'fist'
     e.anim = runtime.blocking ? 5 : p.anim
     e.off = runtime.zone === 'match' ? runtime.me.inv?.[OFFHAND]?.id || 'fist' : 'fist'
+    const burnLeft = runtime.me.effects?.burn
+    e.burning = Boolean(burnLeft && performance.now() - (runtime.me.effectsAt || 0) < burnLeft)
     e.armor = runtime.zone === 'match' ? runtime.me.armor?.tier : 'none'
     e.speed = p.speed
     e.walkPhase = p.walkPhase

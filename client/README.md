@@ -20,6 +20,8 @@ the CPS meter shows your rate) / break, right mouse block with a shield / eat an
 crystals (with the right hand's item, else the offhand's), 1-9 or the wheel pick a slot,
 V switch camera, E use a lobby station (Duels, Spirelands, cases) - in a fight E opens the
 inventory (click two slots to swap them; the offhand slot holds a shield that blocks with
-your sword in hand) and F swaps hands, R play again after a duel. In the lobby: hit the training dummies,
+your sword in hand, and the crafting column makes gear from what you mine) and F swaps hands,
+R play again after a duel. A water bucket pours with right click (puts out fire); an empty
+one scoops water. In the lobby: hit the training dummies,
 run the parkour (gold block to the finish plate), ride the jump pads to the sky island. Phones get a stick, drag-to-look and
 buttons.

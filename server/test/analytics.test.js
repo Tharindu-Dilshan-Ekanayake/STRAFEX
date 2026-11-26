@@ -10,7 +10,7 @@ import { closeStorage, openStorage, recentEvents, recordEvent } from '../src/db.
 test('duels and Spirelands report how they went, anonymously, and the summary reads it', () => {
   let t = 1_000_000
   const events = []
-  const host = new GameHost({ send: () => {}, onAnalytics: (type, data) => events.push({ type, at: t, data }), now: () => t, random: mulberry32(11), log: () => {} })
+  const host = new GameHost({ duelBots: true, send: () => {}, onAnalytics: (type, data) => events.push({ type, at: t, data }), now: () => t, random: mulberry32(11), log: () => {} })
   const step = (ms) => {
     for (let i = 0; i < ms; i += 50) {
       t += 50

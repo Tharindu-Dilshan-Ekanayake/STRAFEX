@@ -106,11 +106,15 @@ function markDirty(x, z) {
 export function setBlock(x, y, z, id) {
   const w = worldState.world
   if (!w || !w.inBounds(x, y, z) || w.get(x, y, z) === id) return false
+  const before = w.get(x, y, z)
   w.set(x, y, z, id)
   if (id === B.AIR) worldState.placed.delete(blockKey(x, y, z))
   else worldState.placed.add(blockKey(x, y, z))
   worldState.pendingEdits.push(x, y, z, id)
   markDirty(x, z)
+  // A light placed or taken away: its light reaches into the chunks round it too.
+  const reach = BLOCKS[id]?.light || BLOCKS[before]?.light || 0
+  if (reach) for (const [dx, dz] of [[-reach, -reach], [reach, -reach], [-reach, reach], [reach, reach]]) markDirty(Math.max(0, x + dx), Math.max(0, z + dz))
   return true
 }
 

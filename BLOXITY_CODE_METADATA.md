@@ -15,21 +15,40 @@ UHC, Mace, Spear Mace, Pot, SMP) or drop into Spirelands, a free-for-all island 
 open sea: beaches with palms, a pier, a shipwreck, a lighthouse and islets round the
 coast, a river, the ruined Spire Keep in the middle, slate spires joined by plank
 bridges, a village, ruins, ponds and jump pads. You can swim (hold jump to rise) and
-climb back out onto the shore. When an opponent is found (or, if
-nobody else is searching, an easy bot after a few seconds) both vote for one of six
+climb back out onto the shore. Duels are always against a real
+player: you wait in the queue until someone else picks the same mode - there are no
+duel bots, online or offline. When an opponent is found both vote for one of six
 arenas (Suncourt, Meadow, Mirage, Bastion, Glade, Dunes), then fight rounds until
 someone reaches the mode's "first to" score; leaving mid-duel is a forfeit. In
 Spirelands you pick a kit, kills heal you and pay out, a three-kill streak puts a bounty
 on your head (whoever ends it earns extra), dying sends you back to the kit picker, and
-broken ground grows back. While only a few people are in, easy bots keep the world at six
-fighters; once five real players are in, the bots all leave and it's people only, up to
-all 50 on the server.
+broken ground grows back. Easy bots keep it at ten fighters, one leaving for each real
+player who joins (1 player: 9 bots ... 9 players: 1 bot); from ten real players on it's
+people only, up to
+all 30 on the server (a full server: Legion's matchmaker starts another).
 
 Two hands: kits put a shield (or a revive charm) in the offhand, so right click blocks
 with the sword still held; E opens the whole inventory (armour, offhand, a 27-slot bag
 and the hotbar; click two slots to swap or stack them), F swaps the held item and the
 offhand. Right click uses the right hand's item if it does something, else the left's
 (eat an apple from the offhand without switching).
+
+Mining and crafting: blocks you break go into your inventory (in a duel, the ones you
+placed; in Spirelands, anything) and the inventory's crafting column turns them into gear:
+a shield (6 planks), obsidian for blast-proof walls, a bucket, and a fire bow. Fire bow
+arrows set a small patch of ground alight where they land and set whoever they hit on fire
+(burning hurts every second, armour doesn't help); flames burn out after a few seconds.
+Water puts you out: jump in, or pour a water bucket (on the ground, onto flames, or over
+yourself); an empty bucket scoops water back up. UHC, SMP and STRAFEX kits carry a water
+bucket; UHC and SMP a fire bow. Each kit has a picture on its card: a fight on the island.
+
+Water flows like Minecraft's: dig beside the sea or pour a bucket and it falls, then
+spreads up to seven blocks; flowing water dries up when its source is gone. With your head
+under water you have ten bubbles of air, then you drown (a heart a second). Spirelands is
+a bigger island (256 x 256) with loot chests all over it: right click (or hit) one for
+random gear; it fills again after 45 seconds. Walking, characters turn to face the way
+they go. The UI is Minecraft-themed: grey inventory panels, stone buttons, pixel icons
+and lettering, Minecraft's hotbar and touch buttons.
 
 Combat: clicks hit (with a short no-damage window after each hit, so timing beats spam),
 falling hits crit, sprint hits knock further and spend your sprint (w-tap to get it
@@ -49,7 +68,7 @@ in your lobby or match, so guests and offline players can talk too; Boxity chat 
 still show over names.
 
 The game runs in `shared/host.js` (queues, duels, Spirelands, combat, bots), the same
-code in the Colyseus room (`server/src/rooms/GameRoom.js`, up to 50 players per server)
+code in the Colyseus room (`server/src/rooms/GameRoom.js`, up to 30 players per server)
 and in the offline stand-in in the browser (`client/src/net/localServer.js`). Player
 saves are `shared/logic.js` profiles. The host checks every reported position
 (`shared/movecheck.js`: speed budget, flying, walking through walls) and puts cheaters
@@ -118,7 +137,7 @@ MEDIUM / HIGH) are avatars; anyone further away is a blocky figure.
 |-------------------------|---------------------------------------------------------------|
 | `BLOXITY_REPORT_TOKEN`  | Token for leaderboard and room reports (none set = no reports) |
 | `MATCHMAKER_REPORT_URL` | Where the Open Rooms reporter posts (injected by Boxity hosting) |
-| `BLOXITY_GAME_ID`       | Hosted game id for reports (default `lucky-islands`)              |
+| `BLOXITY_GAME_ID`       | Hosted game id for reports (default `strafex`)              |
 | `LEGION_WEBHOOK_SECRET` | Must match the webhook's `x-legion-webhook-secret` header     |
 | `MONGODB_URI`           | Shared database for profiles and Gems grants (SQLite without) |
 | `BLOXITY_API_URL` etc.  | Platform URLs; production defaults (`server/src/bloxityEnv.js`) |

@@ -143,17 +143,60 @@ const SPRITES = {
     disc(8, 9, 2.2, null, (x, y) => (x + y < 16 ? hex('#7cff9e') : hex('#1fae55')))
     put(7, 8, '#e8fff0')
   },
-  bow: (px) => {
+  bow: (px, opts) => {
     const { put } = painters(px)
-    for (let i = 0; i <= 11; i += 1) put(2 + i, 13 - i, '#e8e8e8')
+    // A fire bow: a glowing string and an ember at each tip.
+    for (let i = 0; i <= 11; i += 1) put(2 + i, 13 - i, opts.color ? (i % 3 ? '#ffb347' : '#ff6a1a') : '#e8e8e8')
     for (let t = 0; t <= 1.0001; t += 0.04) {
       const bx = 2 + 11 * t
       const by = 13 - 11 * t
       const off = Math.sin(Math.PI * t) * 4.2
       put(Math.round(bx - off * 0.707), Math.round(by - off * 0.707), t > 0.4 && t < 0.6 ? '#4f3319' : '#8a5a2b')
     }
-    put(1, 14, '#a0a0a0')
-    put(14, 1, '#a0a0a0')
+    put(1, 14, opts.color ? '#ff6a1a' : '#a0a0a0')
+    put(14, 1, opts.color ? '#ffd23b' : '#a0a0a0')
+  },
+  bucket: (px, opts) => {
+    const { put } = painters(px)
+    // A stone-grey pail with a handle; water in it if it's full.
+    for (let y = 5; y <= 14; y += 1) {
+      const inset = Math.floor((y - 5) / 4)
+      for (let x = 3 + inset; x <= 12 - inset; x += 1) {
+        const edge = x === 3 + inset || x === 12 - inset || y === 14
+        put(x, y, edge ? '#5d6470' : x < 7 ? '#c9ced8' : x < 10 ? '#a9b0bd' : '#878e9b')
+      }
+    }
+    for (let x = 3; x <= 12; x += 1) put(x, 5, '#5d6470')
+    for (const [x, y] of [[3, 4], [4, 2], [5, 1], [6, 1], [9, 1], [10, 1], [11, 2], [12, 4], [7, 1], [8, 1]]) put(x, y, '#5d6470')
+    if (opts.color) {
+      for (let x = 4; x <= 11; x += 1) put(x, 6, x % 3 ? '#3f8cff' : '#8fc4ff')
+      for (let x = 4; x <= 11; x += 1) put(x, 7, '#2f6fd8')
+    }
+  },
+  torch: (px) => {
+    const { put } = painters(px)
+    for (let k = 0; k < 9; k += 1) put(4 + k, 14 - k, k % 2 ? '#8a5a2b' : '#6b4420')
+    for (const [x, y, c] of [[12, 5, '#ffd23b'], [13, 4, '#fff3b0'], [12, 4, '#ffb347'], [13, 5, '#ff8a1a'], [14, 3, '#ff8a1a'], [12, 3, '#ff8a1a'], [13, 3, '#ffd23b'], [13, 2, '#d8431a'], [11, 4, '#d8431a']]) put(x, y, c)
+  },
+  campfire: (px) => {
+    const { put } = painters(px)
+    for (let x = 1; x < 15; x += 1) {
+      put(x, 13, x % 4 ? '#6b4420' : '#4a2f16')
+      put(x, 12, x % 3 ? '#8a5a2b' : '#6b4420')
+    }
+    for (const [x, y] of [[1, 14], [3, 14], [12, 14], [14, 14]]) put(x, y, '#9aa3b2')
+    for (let k = 0; k < 4; k += 1) {
+      const x = 4 + k * 2
+      for (let y = 0; y < 6 + (k % 2) * 2; y += 1) put(x + (y > 4 ? (k % 2 ? 1 : -1) : 0), 11 - y, y < 2 ? '#fff3b0' : y < 4 ? '#ffd23b' : y < 6 ? '#ff8a1a' : '#d8431a')
+    }
+  },
+  berry: (px) => {
+    const { disc, put } = painters(px)
+    // Three glowing berries on a sprig.
+    for (const [cx, cy] of [[5.5, 9.5], [10.5, 9], [8, 12.5]]) disc(cx, cy, 2.6, null, (x, y, d) => (d < 1 ? hex('#e8fff6') : x + y < cx + cy ? hex('#7dffd9') : hex('#1f9c85')))
+    for (const [x, y] of [[8, 3], [8, 4], [7, 5], [9, 5], [6, 6], [10, 6]]) put(x, y, '#3f9a35')
+    put(9, 2, '#5cd65c')
+    put(10, 2, '#5cd65c')
   },
   pearl: (px) => {
     const { disc, put } = painters(px)
@@ -196,7 +239,7 @@ function spriteFor(id, skin = 'classic') {
   return px
 }
 
-export const isBlockItem = (id) => ITEMS[id]?.kind === 'block'
+export const isBlockItem = (id) => ITEMS[id]?.kind === 'block' && !ITEMS[id].sprite
 export const blockOfItem = (id) => (ITEMS[id]?.kind === 'crystal' ? B.CRYSTAL : ITEMS[id]?.block)
 
 // --- Icons ------------------------------------------------------------------------------

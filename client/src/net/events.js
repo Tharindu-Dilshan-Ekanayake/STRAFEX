@@ -88,6 +88,22 @@ export function handleServerEvent(type, p = {}) {
       game.setRoster(roster)
       return
     }
+    case 'rstate': {
+      // Kills, deaths, zones and armour, without the names and looks (they come with
+      // 'roster' only when they change): [eid, zone, arena, alive, kills, streak, armor,
+      // team] per player.
+      const s = p.s || []
+      const roster = { ...game.roster }
+      for (let i = 0; i + 7 < s.length; i += 8) {
+        const e = roster[s[i]]
+        if (!e) continue
+        roster[s[i]] = { ...e, zone: s[i + 1], arena: s[i + 2], alive: Boolean(s[i + 3]), kills: s[i + 4], streak: s[i + 5], armor: s[i + 6], team: s[i + 7] }
+      }
+      applyRoster(Object.values(roster))
+      runtime.myTeam = roster[runtime.eid]?.team ?? -1
+      game.setRoster(roster)
+      return
+    }
     case 'phase': {
       const now = performance.now()
       game.setPhase({ ...p, endsAt: now + (p.left || 0), queuedSince: now - (p.queuedMs || 0) })
@@ -346,6 +362,33 @@ export function handleServerEvent(type, p = {}) {
     case 'reward':
       sfx.reward()
       game.showToast(p.label, 'success')
+      return
+    case 'looted': {
+      // What came out of the chest.
+      sfx.reward()
+      const list = (p.items || []).map(([id, n]) => `${n > 1 ? `${n} x ` : ''}${t(ITEMS[id]?.name || id)}`).join(', ')
+      game.showToast(list ? t('Chest: {items}', { items: list }) : t('Your inventory is full'), list ? 'success' : 'error')
+      return
+    }
+    case 'chestOpen':
+      pushFx({ type: 'chest', x: p.x, y: p.y, z: p.z })
+      if (near(p.x, p.y, p.z) > 0.2) sfx.pop(near(p.x, p.y, p.z) * 0.6)
+      return
+    case 'pickup':
+      // A mined block went into the inventory.
+      sfx.pop(0.45)
+      return
+    case 'crafted':
+      sfx.buy()
+      game.showToast(t('Crafted {item}', { item: `${p.n > 1 ? `${p.n} x ` : ''}${t(ITEMS[p.id]?.name || p.id)}` }), 'success')
+      return
+    case 'douse':
+      pushFx({ type: 'douse', x: p.x, y: p.y, z: p.z })
+      sfx.splash(Math.max(0.2, near(p.x, p.y, p.z) * 0.8))
+      return
+    case 'ignite':
+      pushFx({ type: 'ignite', x: p.x, y: p.y, z: p.z })
+      sfx.fuse(Math.max(0.15, near(p.x, p.y, p.z) * 0.7))
       return
     case 'toast':
       if (p.kind === 'error') sfx.error()

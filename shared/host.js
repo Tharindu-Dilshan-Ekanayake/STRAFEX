@@ -1,15 +1,18 @@
 import {
+  AIR,
   ARMOR,
   armorReduce,
   BOT_LEVELS,
   BOT_NAMES,
   BOUNTY_STREAK,
   breakSeconds,
+  CAMPFIRE,
   COMBAT,
   CRYSTAL,
   DUEL,
   EFFECTS,
   FFA,
+  FIRE,
   GUST,
   HOTBAR,
   HP,
@@ -18,6 +21,7 @@ import {
   kitArmor,
   kitHotbar,
   LOBBY_SWORD,
+  LOOT,
   MELEE_KINDS,
   MODE_IDS,
   MODES,
@@ -26,14 +30,16 @@ import {
   QUICK_CHAT,
   QUICK_CHAT_MS,
   REACH,
+  RECIPES,
   SPLASH,
+  WATER,
 } from './balance.js'
 import { createBrain, thinkBot } from './bots.js'
 import { ARENA_BUILD_HEIGHT, ARENA_FLOOR, DUEL_MAP_IDS, FFA_SEED, generateArena, generateLobby, generateSpirelands } from './maps.js'
 import { checkMove, createMoveState, resetMoveState } from './movecheck.js'
 import { cellOverlapsBody, createBody, inWater, PLAYER } from './physics.js'
 import { ANIMS, ITEM_IDS } from './protocol.js'
-import { B, BLOCKS, blockKey, isCrystal, isSolidBlock, raycastVoxels, rayBox, unpackKey } from './voxel.js'
+import { B, BLOCKS, blockKey, flowBlock, isCrystal, isSolidBlock, isWater, raycastVoxels, rayBox, unpackKey, waterLevel } from './voxel.js'
 
 /**
  * The game's authority for one server: the lobby, the duel queues, every duel in
@@ -54,7 +60,7 @@ import { B, BLOCKS, blockKey, isCrystal, isSolidBlock, raycastVoxels, rayBox, un
  * - `me`     your health, armour, hotbar, effects and combat stats
  * - one-off events: `hurt`, `kb`, `tp`, `feed`, `proj`, `projEnd`, `boom`, `gust`,
  *   `splash`, `charm`, `blocked`, `shieldOff`, `smash`, `swing`, `act`, `dead`,
- *   `roundEnd`, `duelEnd`, `toast`, `qc`
+ *   `roundEnd`, `duelEnd`, `toast`, `qc`, `pickup`, `crafted`, `douse`, `ignite`
  */
 
 export { ANIMS, ITEM_IDS }
@@ -72,6 +78,27 @@ const USE_GAP = { food: 1000, potion: 800, bow: 300, throw: 220, splash: 260 }
 const BOT_KITS = MODE_IDS.filter((id) => id !== 'crystal')
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
+/** Roster state updates (kills, deaths) at most this often. */
+const ROSTER_GAP_MS = 200
+/** Spirelands snapshots carry players this close to you (blocks, across the ground). */
+const SNAP_RANGE = 140
+/** The entries of a snapshot list (9 numbers each, positions x100) within SNAP_RANGE of (x, z). */
+function nearOnly(list, x, z) {
+  const out = []
+  const r = SNAP_RANGE * 100
+  const cx = x * 100
+  const cz = z * 100
+  for (let i = 0; i + 8 < list.length; i += 9) {
+    const dx = list[i + 1] - cx
+    const dz = list[i + 3] - cz
+    if (dx * dx + dz * dz <= r * r) for (let k = 0; k < 9; k += 1) out.push(list[i + k])
+  }
+  return out
+}
+
+/** A cell and its six neighbours; the four beside it. */
+const NEIGHBOURS = [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
+const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]
 const num = (v, fallback = 0) => (Number.isFinite(Number(v)) ? Number(v) : fallback)
 const round1 = (v) => Math.round(v * 10) / 10
 
@@ -83,7 +110,12 @@ export class GameHost {
    * @param {() => number} [o.now]
    * @param {() => number} [o.random]
    */
-  constructor({ send, onReward = () => {}, onParkour = () => {}, onAnalytics = () => {}, now = () => Date.now(), random = Math.random, log = (msg) => console.warn(msg) }) {
+  /**
+   * Duels are always against a real player. `duelBots` (tests only) lets a lone player
+   * in a duel queue get a bot instead.
+   */
+  constructor({ send, onReward = () => {}, onParkour = () => {}, onAnalytics = () => {}, now = () => Date.now(), random = Math.random, log = (msg) => console.warn(msg), duelBots = false }) {
+    this.duelBots = duelBots
     this.sendTo = send
     /** A player reached the top of the lobby parkour: `(cid, ms)`. */
     this.onParkour = onParkour
@@ -239,6 +271,8 @@ export class GameHost {
         return this.swapSlots(ent, Math.floor(num(p.a, -1)), Math.floor(num(p.b, -1)))
       case 'swapHands':
         return this.swapSlots(ent, ent.sel, OFFHAND)
+      case 'craft':
+        return this.craft(ent, String(p.id))
       case 'swing':
         if (ent.zone === 'lobby') this.toZone('lobby', null, 'swing', { eid: ent.eid }, ent.cid)
         else if (ent.arena) this.toWatchers(ent, 'swing', { eid: ent.eid })
@@ -286,6 +320,8 @@ export class GameHost {
       }
       case 'parkour':
         return this.onParkourDone(member, ent, Math.floor(num(p.ms)))
+      case 'loot':
+        return this.openChest(ent, Math.floor(num(p.x)), Math.floor(num(p.y)), Math.floor(num(p.z)))
       case 'qc': {
         const i = Math.floor(num(p.i, -1))
         const now = this.now()
@@ -352,7 +388,7 @@ export class GameHost {
         const fx = ent.effects
         bad = checkMove(arena.world, ent.mv, ent, { x, y, z }, dt, now, {
           speedMul: fx.speed > now ? EFFECTS.speed.speedMul : 1,
-          jumpMul: fx.jump > now ? EFFECTS.jump.jumpMul : 1,
+          jumpMul: fx.leap > now ? EFFECTS.leap.jumpMul : fx.jump > now ? EFFECTS.jump.jumpMul : 1,
         })
       }
       if (bad) {
@@ -384,7 +420,7 @@ export class GameHost {
     }
     if (ent.wasAir && arena.phase === 'fight') {
       const fall = ent.peakY - y
-      const wet = arena.world.get(ent.x, y, ent.z) === B.WATER
+      const wet = isWater(arena.world.get(ent.x, y, ent.z))
       if (fall > COMBAT.safeFall && now > ent.noFallUntil && !wet) this.damage(ent, Math.ceil(fall - COMBAT.safeFall), null, 'fall', { pierce: true, iframes: false })
     }
     ent.wasAir = false
@@ -419,7 +455,12 @@ export class GameHost {
     this.phaseDirty = true
   }
 
-  /** Pairs people waiting for the same mode; someone alone long enough gets a bot. */
+  /**
+   * Pairs everyone searching for a duel: two people who picked the same mode first; then
+   * anyone left over with anyone else, straight away, in the mode of whoever has waited
+   * longer - nobody sits in a queue while someone else in the room is searching too.
+   * (Tests with `duelBots`: someone alone long enough gets a bot.)
+   */
   matchmake(now) {
     const waiting = new Map()
     for (const m of this.members.values()) {
@@ -427,7 +468,7 @@ export class GameHost {
       if (!waiting.has(m.queue)) waiting.set(m.queue, [])
       waiting.get(m.queue).push(m)
     }
-    const solo = this.members.size <= 1
+    const leftover = []
     for (const [mode, list] of waiting) {
       list.sort((a, b) => a.queuedAt - b.queuedAt)
       while (list.length >= 2) {
@@ -435,10 +476,17 @@ export class GameHost {
         const b = list.shift()
         this.createDuel(mode, [this.ents.get(a.eid), this.ents.get(b.eid)])
       }
-      if (list.length === 1) {
-        const m = list[0]
-        if (now - m.queuedAt >= (solo ? DUEL.soloBotMs : DUEL.botFillMs)) this.createDuel(mode, [this.ents.get(m.eid), null])
-      }
+      if (list.length === 1) leftover.push(list[0])
+    }
+    leftover.sort((a, b) => a.queuedAt - b.queuedAt)
+    while (leftover.length >= 2) {
+      const a = leftover.shift()
+      const b = leftover.shift()
+      this.createDuel(a.queue, [this.ents.get(a.eid), this.ents.get(b.eid)])
+    }
+    if (this.duelBots && leftover.length === 1) {
+      const m = leftover[0]
+      if (now - m.queuedAt >= (this.members.size <= 1 ? DUEL.soloBotMs : DUEL.botFillMs)) this.createDuel(m.queue, [this.ents.get(m.eid), null])
     }
   }
 
@@ -458,6 +506,8 @@ export class GameHost {
       edits: new Map(),
       pending: [],
       projs: [],
+      fires: [],
+      fireBy: new Map(),
       nextProj: 1,
       phase: 'vote',
       phaseEnds: now + DUEL.voteMs,
@@ -485,6 +535,8 @@ export class GameHost {
         e.zone = 'limbo'
       } else {
         const m = this.members.get(e.cid)
+        // Searching from Spirelands: out of it and back to the lobby for the map vote.
+        if (e.arena === 'ffa') this.pullFromFfa(e)
         m.queue = null
         m.duel = key
         if (e.cid) this.sendTo(e.cid, 'toast', { text: `Opponent found: ${ents[1 - i].name}!`, kind: 'success' })
@@ -493,6 +545,17 @@ export class GameHost {
     this.phaseDirty = true
     this.rosterDirty = true
     return arena
+  }
+
+  /** Out of Spirelands to the lobby (an opponent was found for the duel you searched for). */
+  pullFromFfa(ent) {
+    const arena = this.arenas.get('ffa')
+    if (arena) {
+      if (ent.alive && ent.lifeKills > 0) this.reward(ent, { kind: 'ffa', mode: ent.kit, win: false, kills: ent.lifeKills, hits: ent.stats.hits, bestCombo: ent.stats.best, bounties: ent.bounties || 0 })
+      if (ent.alive) this.toArena(arena, 'feed', { k: '', v: ent.name, how: 'left' })
+    }
+    ent.alive = false
+    this.toLobby(ent)
   }
 
   makeBot(mode, team) {
@@ -531,6 +594,10 @@ export class GameHost {
   startRound(arena) {
     const gen = generateArena(arena.mapId, arena.seed)
     arena.world = gen.world
+    arena.campfires = new Set()
+    arena.fires = []
+    arena.water = new Set()
+    arena.waterAt = 0
     arena.spawns = gen.spawns
     arena.center = gen.center
     arena.edits.clear()
@@ -572,6 +639,8 @@ export class GameHost {
     e.maxHp = HP
     e.absorb = 0
     e.effects = {}
+    e.air = AIR.ms
+    e.airBubbles = AIR.bubbles
     e.lastHitBy = null
     e.lastHurtAt = 0
     e.hurtUntil = 0
@@ -696,9 +765,10 @@ export class GameHost {
    */
   leaveArena(ent, why) {
     const member = ent.cid ? this.members.get(ent.cid) : null
-    if (member) member.queue = null
     const key = member?.duel || ent.arena
     const arena = this.arenas.get(key)
+    // Out of a duel: no queue. Out of Spirelands: a duel search you started goes on.
+    if (member && arena?.kind !== 'ffa') member.queue = null
     if (!arena) return
     if (arena.kind === 'duel') {
       if (member) member.duel = null
@@ -751,9 +821,12 @@ export class GameHost {
       world: gen.world,
       spawns: gen.spawns,
       center: gen.center,
+      chests: gen.chests.map((c) => ({ ...c, refillAt: 0 })),
       edits: new Map(),
       pending: [],
       projs: [],
+      fires: [],
+      fireBy: new Map(),
       nextProj: 1,
       phase: 'fight',
       phaseEnds: 0,
@@ -769,7 +842,7 @@ export class GameHost {
 
   enterFfa(member, ent) {
     if (member.duel || ent.zone !== 'lobby') return
-    member.queue = null
+    // A duel search carries on in here: when an opponent turns up you're pulled out to it.
     const arena = this.ffaArena()
     ent.zone = 'spec'
     ent.arena = 'ffa'
@@ -821,7 +894,7 @@ export class GameHost {
 
   tickFfa(arena, dt, now) {
     // A few people: keep the world lively with bots. Nobody, or enough real players
-    // (FFA.botsOffAt): no bots - they leave and it's people only.
+    // (FFA.population): no bots - they leave and it's people only.
     let humans = 0
     const bots = []
     for (const e of this.ents.values()) {
@@ -829,7 +902,7 @@ export class GameHost {
       if (e.bot) bots.push(e)
       else humans += 1
     }
-    const want = humans && humans < FFA.botsOffAt ? clamp(FFA.population - humans, 0, FFA.maxBots) : 0
+    const want = humans ? Math.max(0, FFA.population - humans) : 0
     if (bots.length > want) {
       // Retire the dead first, then whoever is furthest from everyone.
       bots.sort((a, b) => Number(a.alive) - Number(b.alive))
@@ -852,6 +925,7 @@ export class GameHost {
     }
     if (!humans && !bots.length) return
     this.tickFighters(arena, dt, now)
+    this.tickChests(arena, now)
     // The world mends itself: broken ground grows back, placed blocks crumble.
     while (arena.restore.length && arena.restore[0].at <= now) {
       const r = arena.restore.shift()
@@ -887,6 +961,252 @@ export class GameHost {
       this.tickStatus(arena, ent, now)
     }
     this.tickProjectiles(arena, dt, now)
+    this.tickFires(arena, now)
+    this.tickWater(arena, now)
+  }
+
+  // --- Water ---------------------------------------------------------------------------------
+
+  /** Something changed at (x, y, z): water there or next to it settles again soon. */
+  wakeWater(arena, x, y, z) {
+    if (!arena.water) arena.water = new Set()
+    const w = arena.world
+    for (const [dx, dy, dz] of NEIGHBOURS) {
+      const nx = x + dx
+      const ny = y + dy
+      const nz = z + dz
+      if (w.inBounds(nx, ny, nz)) arena.water.add(blockKey(nx, ny, nz))
+    }
+    if (!arena.waterAt) arena.waterAt = this.now() + WATER.stepMs
+  }
+
+  /** Flowing water settles a step: falls, spreads, or dries up where nothing feeds it. */
+  tickWater(arena, now) {
+    if (!arena.water?.size || now < (arena.waterAt || 0)) return
+    arena.waterAt = 0
+    const keys = [...arena.water]
+    arena.water.clear()
+    let budget = WATER.perStep
+    for (const key of keys) {
+      if (budget <= 0) {
+        arena.water.add(key)
+        continue
+      }
+      const [x, y, z] = unpackKey(key)
+      if (this.settleWater(arena, x, y, z)) budget -= 1
+    }
+    if (arena.water.size && !arena.waterAt) arena.waterAt = now + WATER.stepMs
+  }
+
+  /** One cell's water rules (Minecraft's): returns whether anything changed. */
+  settleWater(arena, x, y, z) {
+    const w = arena.world
+    const open = (id) => id === B.AIR || id === B.FIRE || BLOCKS[id]?.render === 'cross'
+    // Water spreads sideways only from on top of something: a solid block or still water
+    // (not while falling).
+    const canSpread = (bx, by, bz) => {
+      const below = w.get(bx, by - 1, bz)
+      return by > 0 && !open(below) && (!isWater(below) || below === B.WATER)
+    }
+    let changed = false
+    let id = w.get(x, y, z)
+    let level = waterLevel(id)
+    if (level > 0) {
+      // Flowing water stays only while something feeds it: water above, or water beside
+      // that is closer to its source and spreading.
+      let want = isWater(w.get(x, y + 1, z)) ? 1 : 99
+      for (const [dx, , dz] of SIDES) {
+        const l = waterLevel(w.get(x + dx, y, z + dz))
+        if (l >= 0 && l < 7 && canSpread(x + dx, y, z + dz)) want = Math.min(want, l + 1)
+      }
+      if (want > 7) {
+        this.setWater(arena, x, y, z, B.AIR)
+        return true
+      }
+      if (want !== level) {
+        this.setWater(arena, x, y, z, flowBlock(want))
+        changed = true
+        id = w.get(x, y, z)
+        level = want
+      }
+    }
+    if (level < 0) return changed
+    // Down first; if it can't fall, outwards one level weaker.
+    if (y > 1 && open(w.get(x, y - 1, z))) {
+      this.setWater(arena, x, y - 1, z, flowBlock(1))
+      return true
+    }
+    if (level < 7 && canSpread(x, y, z)) {
+      for (const [dx, , dz] of SIDES) {
+        if (!w.inBounds(x + dx, y, z + dz) || !open(w.get(x + dx, y, z + dz))) continue
+        this.setWater(arena, x + dx, y, z + dz, flowBlock(level + 1))
+        changed = true
+      }
+    }
+    return changed
+  }
+
+  /** The water system's own change: not part of the world that grows back, and it wakes the cells round it. */
+  setWater(arena, x, y, z, id) {
+    this.setBlock(arena, x, y, z, id, true, true)
+    this.wakeWater(arena, x, y, z)
+  }
+
+  // --- Fire -----------------------------------------------------------------------------------
+
+  /** A fire arrow landed at (x, y, z): a small patch of the ground nearby catches. */
+  igniteAt(arena, x, y, z, owner) {
+    const w = arena.world
+    if (isWater(w.get(x, y, z))) return
+    if (!arena.fires) arena.fires = []
+    if (!arena.fireBy) arena.fireBy = new Map()
+    const cx = Math.floor(x)
+    const cy = Math.floor(y + 0.25)
+    const cz = Math.floor(z)
+    const spots = []
+    for (let dx = -2; dx <= 2; dx += 1) {
+      for (let dz = -2; dz <= 2; dz += 1) {
+        for (let dy = -1; dy <= 1; dy += 1) {
+          const bx = cx + dx
+          const by = cy + dy
+          const bz = cz + dz
+          const d = Math.hypot(bx + 0.5 - x, by + 0.2 - y, bz + 0.5 - z)
+          if (d > FIRE.radius + 0.6) continue
+          const here = w.get(bx, by, bz)
+          if ((here !== B.AIR && BLOCKS[here]?.render !== 'cross') || here === B.FIRE) continue
+          if (!w.isSolid(bx, by - 1, bz) || isWater(w.get(bx, by - 1, bz))) continue
+          spots.push({ bx, by, bz, d })
+        }
+      }
+    }
+    spots.sort((a, b) => a.d - b.d)
+    const now = this.now()
+    let lit = 0
+    for (const { bx, by, bz } of spots) {
+      if (lit >= FIRE.cells || arena.fires.length >= FIRE.max) break
+      this.setBlock(arena, bx, by, bz, B.FIRE, true)
+      arena.fires.push({ x: bx, y: by, z: bz, at: now + FIRE.lifeMs + Math.floor(this.random() * 1500) })
+      arena.fireBy.set(blockKey(bx, by, bz), owner)
+      lit += 1
+    }
+    if (lit) this.toArena(arena, 'ignite', { x, y, z })
+  }
+
+  /** Flames burn out. */
+  tickFires(arena, now) {
+    const fires = arena.fires
+    if (!fires?.length) return
+    for (let i = fires.length - 1; i >= 0; i -= 1) {
+      const f = fires[i]
+      if (f.at > now && arena.world.get(f.x, f.y, f.z) === B.FIRE) continue
+      fires.splice(i, 1)
+      arena.fireBy?.delete(blockKey(f.x, f.y, f.z))
+      if (arena.world.get(f.x, f.y, f.z) === B.FIRE) this.setBlock(arena, f.x, f.y, f.z, B.AIR, true)
+    }
+  }
+
+  /** Water poured at (x, y, z): nearby flames go out, and so does anyone burning there. */
+  douse(arena, x, y, z) {
+    for (const f of arena.fires || []) {
+      if (Math.hypot(f.x + 0.5 - x, f.y + 0.5 - y, f.z + 0.5 - z) <= FIRE.douse) f.at = 0
+    }
+    this.tickFires(arena, this.now())
+    for (const e of this.ents.values()) {
+      if (e.arena === arena.key && e.alive && Math.hypot(e.x - x, e.y + 0.9 - y, e.z - z) <= FIRE.douse) this.extinguish(e)
+    }
+    this.toArena(arena, 'douse', { x, y, z })
+  }
+
+  // --- Loot chests (Spirelands) ---------------------------------------------------------------
+
+  /** Opens the chest at (x, y, z): random gear into the inventory; it comes back later. */
+  openChest(ent, x, y, z) {
+    const arena = this.actArena(ent)
+    const chest = arena?.chests?.find((c) => c.x === x && c.y === y && c.z === z)
+    if (!chest || arena.world.get(x, y, z) !== B.LOOT_CHEST || !this.inReach(ent, x, y, z)) return
+    const total = LOOT.table.reduce((s, r) => s + r[2], 0)
+    const got = []
+    for (let i = 0; i < LOOT.rolls; i += 1) {
+      let pick = this.random() * total
+      const row = LOOT.table.find((r) => (pick -= r[2]) < 0) || LOOT.table[0]
+      const n = this.give(ent, row[0], row[1])
+      if (n) got.push([row[0], n])
+    }
+    chest.refillAt = this.now() + LOOT.refillMs
+    this.setBlock(arena, x, y, z, B.AIR, true)
+    if (ent.cid) this.sendTo(ent.cid, 'looted', { items: got })
+    this.toArena(arena, 'chestOpen', { x: x + 0.5, y: y + 0.5, z: z + 0.5 })
+  }
+
+  /** Opened chests fill up again (when nobody stands in the way). */
+  tickChests(arena, now) {
+    for (const c of arena.chests || []) {
+      if (!c.refillAt || now < c.refillAt) continue
+      const here = arena.world.get(c.x, c.y, c.z)
+      if (here !== B.AIR && BLOCKS[here]?.render !== 'cross') continue
+      if ([...this.ents.values()].some((e) => e.arena === arena.key && e.alive && cellOverlapsBody(c.x, c.y, c.z, e.x, e.y, e.z))) continue
+      c.refillAt = 0
+      this.setBlock(arena, c.x, c.y, c.z, B.LOOT_CHEST, true)
+    }
+  }
+
+  // --- Inventory: picking up, crafting ------------------------------------------------------
+
+  /** Puts `n` of `id` in the inventory (topping up stacks, then empty slots). Returns how many fit. */
+  give(ent, id, n) {
+    const max = ITEMS[id]?.stack || 1
+    const inv = ent.inv
+    let left = n
+    for (let i = 0; i <= OFFHAND && left > 0; i += 1) {
+      const s = inv[i]
+      if (s && s.id === id && s.n < max) {
+        const k = Math.min(left, max - s.n)
+        s.n += k
+        left -= k
+      }
+    }
+    for (let i = 0; i < OFFHAND && left > 0; i += 1) {
+      if (inv[i]) continue
+      const k = Math.min(left, max)
+      inv[i] = { id, n: k }
+      left -= k
+    }
+    if (left < n) ent.dirty = true
+    return n - left
+  }
+
+  /** How many of `id` the inventory holds. */
+  count(ent, id) {
+    let n = 0
+    for (const s of ent.inv) if (s?.id === id) n += s.n
+    return n
+  }
+
+  /** Takes `n` of `id` from anywhere, the bag first so the hotbar stays as it is. */
+  takeItem(ent, id, n) {
+    let left = n
+    for (let i = ent.inv.length - 1; i >= 0 && left > 0; i -= 1) {
+      const s = ent.inv[i]
+      if (s?.id !== id) continue
+      const k = Math.min(left, s.n)
+      this.take(ent, i, k)
+      left -= k
+    }
+  }
+
+  craft(ent, id) {
+    if (ent.zone !== 'match' || !ent.alive) return
+    const r = RECIPES.find((x) => x.id === id)
+    if (!r || !r.need.every(([item, n]) => this.count(ent, item) >= n)) return
+    for (const [item, n] of r.need) this.takeItem(ent, item, n)
+    const got = this.give(ent, r.out[0], r.out[1])
+    // No room for it after all: everything goes back.
+    if (!got) {
+      for (const [item, n] of r.need) this.give(ent, item, n)
+      return
+    }
+    ent.dirty = true
+    if (ent.cid) this.sendTo(ent.cid, 'crafted', { id: r.out[0], n: got })
   }
 
   tickStatus(arena, ent, now) {
@@ -906,12 +1226,68 @@ export class GameHost {
       ent.hp = Math.min(ent.maxHp, ent.hp + 1)
       ent.dirty = true
     }
+    // Fire: standing in flames sets you alight; water puts you out; burning hurts.
+    const fx0 = Math.floor(ent.x)
+    const fz0 = Math.floor(ent.z)
+    const burns = (id) => id === B.FIRE || id === B.CAMPFIRE
+    const flame = burns(w.get(fx0, Math.floor(ent.y + 0.2), fz0)) || burns(w.get(fx0, Math.floor(ent.y + 1.1), fz0))
+    // Beside (not in) a campfire: its warmth heals, slowly.
+    if (!flame && arena.campfires?.size && ent.hp < ent.maxHp && now - (ent.lastWarmAt || 0) >= CAMPFIRE.everyMs) {
+      for (const key of arena.campfires) {
+        const [cx, cy, cz] = unpackKey(key)
+        if (Math.hypot(cx + 0.5 - ent.x, cy - ent.y, cz + 0.5 - ent.z) > CAMPFIRE.radius) continue
+        ent.lastWarmAt = now
+        ent.hp = Math.min(ent.maxHp, ent.hp + CAMPFIRE.heal)
+        ent.dirty = true
+        break
+      }
+    }
+    if (flame) {
+      if (!(fx.burn > now)) ent.dirty = true
+      fx.burn = now + FIRE.burnMs
+      const by = arena.fireBy?.get(blockKey(fx0, Math.floor(ent.y + 0.2), fz0))
+      if (by && by !== ent.eid) ent.burnBy = by
+    }
+    // Breath: head under water uses it up, then you drown; out of the water it comes back.
+    const step = Math.min(250, now - (ent.airAt || now))
+    ent.airAt = now
+    if (ent.air === undefined) ent.air = AIR.ms
+    if (isWater(w.get(fx0, Math.floor(ent.y + PLAYER.eye), fz0))) {
+      ent.air = Math.max(0, ent.air - step)
+      if (ent.air <= 0 && now - (ent.lastDrownAt || 0) >= AIR.tickMs) {
+        ent.lastDrownAt = now
+        const by = ent.lastHitBy && now - ent.lastHitBy.at < 10000 ? ent.lastHitBy.eid : null
+        this.damage(ent, AIR.dmg, by, 'drown', { pierce: true, iframes: false })
+        if (!ent.alive) return
+      }
+    } else if (ent.air < AIR.ms) ent.air = Math.min(AIR.ms, ent.air + step * AIR.refill)
+    const bubbles = Math.ceil((ent.air / AIR.ms) * AIR.bubbles)
+    if (bubbles !== ent.airBubbles) {
+      ent.airBubbles = bubbles
+      ent.dirty = true
+    }
+    if (fx.burn > now) {
+      if (inWater(w, ent.x, ent.y, ent.z)) this.extinguish(ent)
+      else if (now - (ent.lastBurnAt || 0) >= FIRE.tickMs) {
+        ent.lastBurnAt = now
+        this.damage(ent, FIRE.dmg, ent.burnBy || null, 'fire', { pierce: true, iframes: false })
+        if (!ent.alive) return
+      }
+    }
     for (const k of Object.keys(fx)) {
       if (fx[k] && fx[k] <= now) {
         delete fx[k]
         ent.dirty = true
       }
     }
+  }
+
+  /** Not burning any more. */
+  extinguish(ent) {
+    if (!ent.effects.burn) return
+    delete ent.effects.burn
+    ent.burnBy = null
+    ent.dirty = true
   }
 
   eye(ent) {
@@ -954,9 +1330,16 @@ export class GameHost {
   /** Breaks a block for `ent` (already checked): crystals explode. */
   breakBlock(arena, ent, x, y, z) {
     const id = arena.world.get(x, y, z)
-    this.setBlock(arena, x, y, z, B.AIR)
-    if (BLOCKS[arena.world.get(x, y + 1, z)]?.render === 'cross') this.setBlock(arena, x, y + 1, z, B.AIR)
-    if (isCrystal(id)) this.explode(arena, x + 0.5, y + 0.5, z + 0.5, ent.eid)
+    // Flames just go out (and don't grow back with the world).
+    this.setBlock(arena, x, y, z, B.AIR, id === B.FIRE)
+    if (BLOCKS[arena.world.get(x, y + 1, z)]?.render === 'cross') this.setBlock(arena, x, y + 1, z, B.AIR, arena.world.get(x, y + 1, z) === B.FIRE)
+    if (isCrystal(id)) {
+      this.explode(arena, x + 0.5, y + 0.5, z + 0.5, ent.eid)
+      return
+    }
+    // What you mine goes into your inventory.
+    const drop = BLOCKS[id]?.drop
+    if (ent && ITEMS[drop] && this.give(ent, drop, 1) && ent.cid) this.sendTo(ent.cid, 'pickup', { id: drop })
   }
 
   onPlace(ent, x, y, z, hand) {
@@ -965,8 +1348,47 @@ export class GameHost {
     const index = hand === 'off' ? OFFHAND : ent.sel
     const slot = ent.inv[index]
     const item = slot && ITEMS[slot.id]
-    if (!item || (item.kind !== 'block' && item.kind !== 'crystal') || !this.inReach(ent, x, y, z)) return this.reject(ent, x, y, z)
-    if (!this.placeBlock(arena, ent, x, y, z, index)) this.reject(ent, x, y, z)
+    const water = item?.kind === 'bucket' && item.fill === 'water'
+    if (!item || (item.kind !== 'block' && item.kind !== 'crystal' && !water) || !this.inReach(ent, x, y, z)) return this.reject(ent, x, y, z)
+    if (!(water ? this.pourWater(arena, ent, x, y, z, index) : this.placeBlock(arena, ent, x, y, z, index))) this.reject(ent, x, y, z)
+  }
+
+  /** A water bucket poured into cell (x, y, z) (it may be where you stand: that's the point). */
+  pourWater(arena, ent, x, y, z, index) {
+    if (!this.canPlaceAt(arena, x, y, z, false, true)) return false
+    ent.inv[index] = { id: 'bucket', n: 1 }
+    ent.dirty = true
+    this.setBlock(arena, x, y, z, B.WATER)
+    arena.placed.add(blockKey(x, y, z))
+    this.douse(arena, x + 0.5, y + 0.5, z + 0.5)
+    this.toWatchers(ent, 'swing', { eid: ent.eid })
+    return true
+  }
+
+  /**
+   * Right click with a bucket: an empty one fills from the water you point at (water you
+   * poured is taken back; the sea and lakes never run dry); a full one with nowhere to
+   * pour is tipped over yourself - out goes the fire.
+   */
+  useBucket(ent, index, p) {
+    const arena = this.actArena(ent)
+    const item = ITEMS[ent.inv[index]?.id]
+    if (!arena || item?.kind !== 'bucket') return
+    if (item.fill === 'water') {
+      ent.inv[index] = { id: 'bucket', n: 1 }
+      ent.dirty = true
+      this.douse(arena, ent.x, ent.y + 0.9, ent.z)
+      return
+    }
+    const x = Math.floor(num(p.x, NaN))
+    const y = Math.floor(num(p.y, NaN))
+    const z = Math.floor(num(p.z, NaN))
+    if (!Number.isFinite(x + y + z) || arena.world.get(x, y, z) !== B.WATER || !this.inReach(ent, x, y, z)) return
+    const key = blockKey(x, y, z)
+    if (arena.placed.has(key)) this.setBlock(arena, x, y, z, B.AIR)
+    ent.inv[index] = { id: 'water_bucket', n: 1 }
+    ent.dirty = true
+    this.toWatchers(ent, 'swing', { eid: ent.eid })
   }
 
   /**
@@ -995,12 +1417,12 @@ export class GameHost {
   }
 
   /** Can a block go in cell (x, y, z) of `arena`? Crystals only sit on obsidian or corestone. */
-  canPlaceAt(arena, x, y, z, crystal = false) {
+  canPlaceAt(arena, x, y, z, crystal = false, liquid = false) {
     const w = arena.world
     if (x < 0 || z < 0 || y < 1 || x >= w.sx || z >= w.sz || y >= w.sy - 1) return false
     if (arena.kind === 'duel' && y > ARENA_FLOOR + ARENA_BUILD_HEIGHT) return false
     const here = w.get(x, y, z)
-    if (here !== B.AIR && BLOCKS[here].render !== 'cross' && here !== B.WATER) return false
+    if (here !== B.AIR && BLOCKS[here].render !== 'cross' && !isWater(here)) return false
     if (crystal) {
       const below = w.get(x, y - 1, z)
       if (below !== B.OBSIDIAN && below !== B.CORESTONE) return false
@@ -1008,6 +1430,7 @@ export class GameHost {
     const touching =
       w.isSolid(x + 1, y, z) || w.isSolid(x - 1, y, z) || w.isSolid(x, y + 1, z) || w.isSolid(x, y - 1, z) || w.isSolid(x, y, z + 1) || w.isSolid(x, y, z - 1)
     if (!touching) return false
+    if (liquid) return true
     for (const e of this.ents.values()) {
       if (e.arena === arena.key && e.zone === 'match' && e.alive && cellOverlapsBody(x, y, z, e.x, e.y, e.z, PLAYER.halfW - 0.05, PLAYER.height - 0.05)) return false
     }
@@ -1049,7 +1472,7 @@ export class GameHost {
             continue
           }
           const def = BLOCKS[id]
-          if (!Number.isFinite(def.hard) || def.hard >= 2.4 || id === B.WATER) continue
+          if (!Number.isFinite(def.hard) || def.hard >= 2.4 || isWater(id)) continue
           this.setBlock(arena, x, y, z, B.AIR)
         }
       }
@@ -1169,6 +1592,7 @@ export class GameHost {
     if (!this.actArena(ent)) return
     const index = p.hand === 'off' ? OFFHAND : ent.sel
     if (!ent.inv[index]) return
+    if (ITEMS[ent.inv[index].id]?.kind === 'bucket') return this.useBucket(ent, index, p)
     const dir = Array.isArray(p.dir) ? p.dir.slice(0, 3).map((v) => num(v)) : [-Math.sin(ent.yaw), 0, -Math.cos(ent.yaw)]
     this.useItem(ent, index, dir, clamp(num(p.charge, 1), 0, 1))
   }
@@ -1190,6 +1614,11 @@ export class GameHost {
         ent.hp = Math.min(ent.maxHp, ent.hp + (item.heal || 0))
         if (item.absorb) ent.absorb = Math.max(ent.absorb, item.absorb)
         if (item.regen) ent.effects.regen = now + item.regen * 1000
+        if (item.effect) {
+          ent.effects[item.effect] = now + item.dur * 1000
+          // Leaping: no fall damage until you've had time to land after it wears off.
+          if (item.effect === 'leap') ent.noFallUntil = Math.max(ent.noFallUntil || 0, now + item.dur * 1000 + 4000)
+        }
         break
       case 'potion':
         if (item.heal) ent.hp = Math.min(ent.maxHp, ent.hp + item.heal)
@@ -1197,7 +1626,7 @@ export class GameHost {
         break
       case 'bow': {
         const c = Math.max(0.25, charge)
-        this.shoot(arena, ent, 'arrow', dir, PROJECTILES.arrow.speed * (0.45 + 0.55 * c), Math.round(2 + (item.dmg - 2) * c), 3.5 * c)
+        this.shoot(arena, ent, 'arrow', dir, PROJECTILES.arrow.speed * (0.45 + 0.55 * c), Math.round(2 + (item.dmg - 2) * c), 3.5 * c, slot.id)
         break
       }
       case 'throw':
@@ -1263,9 +1692,10 @@ export class GameHost {
       age: 0,
       dmg,
       knock,
+      fire: Boolean(ITEMS[item]?.fire),
     }
     arena.projs.push(p)
-    this.toArena(arena, 'proj', { id: p.id, kind, owner: p.owner, x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz })
+    this.toArena(arena, 'proj', { id: p.id, kind, owner: p.owner, x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, fire: p.fire ? 1 : 0 })
   }
 
   tickProjectiles(arena, dt) {
@@ -1314,7 +1744,19 @@ export class GameHost {
       if (best?.ent) {
         const len = Math.hypot(p.vx, p.vz) || 1
         const k = p.knock + 2.5
-        this.damage(best.ent, p.dmg, p.owner, 'arrow', { kx: (p.vx / len) * k, kz: (p.vz / len) * k, ky: 3.5, from: { x: hx - p.vx, z: hz - p.vz } })
+        const dealt = this.damage(best.ent, p.dmg, p.owner, 'arrow', { kx: (p.vx / len) * k, kz: (p.vz / len) * k, ky: 3.5, from: { x: hx - p.vx, z: hz - p.vz } })
+        // A fire arrow sets whoever it hits alight (not through a raised shield).
+        if (p.fire && dealt && best.ent.alive && !inWater(arena.world, best.ent.x, best.ent.y, best.ent.z)) {
+          best.ent.effects.burn = this.now() + FIRE.burnMs
+          best.ent.burnBy = p.owner
+          best.ent.dirty = true
+        }
+      }
+      if (p.fire) {
+        // Where it stuck (just outside the block it hit), or at the feet of whoever it hit.
+        const b = best?.block
+        if (b) this.igniteAt(arena, b.x + 0.5 + b.nx * 0.6, b.y + (b.ny === 1 ? 1 : b.ny === -1 ? -1 : 0.1), b.z + 0.5 + b.nz * 0.6, p.owner)
+        else if (best?.ent) this.igniteAt(arena, best.ent.x, best.ent.y, best.ent.z, p.owner)
       }
       return
     }
@@ -1570,11 +2012,20 @@ export class GameHost {
 
   // --- World ------------------------------------------------------------------------------
 
-  setBlock(arena, x, y, z, id, restoring = false) {
+  setBlock(arena, x, y, z, id, restoring = false, fromWater = false) {
     const before = arena.world.get(x, y, z)
     if (!arena.world.set(x, y, z, id)) return
+    // A change by water itself wakes its own neighbours; any other change next to water
+    // (digging beside the sea, pouring a bucket, a block placed in a stream) lets it move.
+    if (!fromWater) {
+      const w = arena.world
+      if (isWater(id) || isWater(before) || NEIGHBOURS.some(([dx, dy, dz]) => isWater(w.get(x + dx, y + dy, z + dz)))) this.wakeWater(arena, x, y, z)
+    }
     const key = blockKey(x, y, z)
     if (id === B.AIR) arena.placed.delete(key)
+    // Where the campfires are (for their warmth).
+    if (id === B.CAMPFIRE) (arena.campfires ||= new Set()).add(key)
+    else if (before === B.CAMPFIRE) arena.campfires?.delete(key)
     arena.edits.set(key, id)
     arena.pending.push(x, y, z, id)
     if (arena.kind === 'ffa' && !restoring && !arena.orig.has(key)) {
@@ -1699,7 +2150,18 @@ export class GameHost {
     if (arena?.kind === 'ffa') {
       let alive = 0
       for (const e of this.ents.values()) if (e.arena === 'ffa' && e.alive) alive += 1
-      return { kind: 'ffa', phase: 'fight', left: 0, mode: ent.kit, map: 'spirelands', alive, needKit: !ent.alive }
+      return {
+        kind: 'ffa',
+        phase: 'fight',
+        left: 0,
+        mode: ent.kit,
+        map: 'spirelands',
+        alive,
+        needKit: !ent.alive,
+        queue: member.queue,
+        queuedMs: member.queue ? now - member.queuedAt : 0,
+        searching: lobbyInfo.searching,
+      }
     }
     return { kind: 'lobby', phase: 'lobby', left: 0, queue: member.queue, queuedMs: member.queue ? now - member.queuedAt : 0, ...lobbyInfo }
   }
@@ -1730,11 +2192,20 @@ export class GameHost {
         if (ent) this.sendTo(member.cid, 'phase', this.phaseFor(member, ent, now, lobbyInfo))
       }
     }
-    if (this.rosterDirty) {
+    // Who's here. Names and avatar looks go out only when they change (someone joins,
+    // leaves, dresses up): with a full server that list is tens of KB. Kills, deaths and
+    // respawns send just the small state below - and no more than five times a second.
+    if (this.rosterDirty && now - (this.rosterAt || 0) >= ROSTER_GAP_MS) {
       this.rosterDirty = false
+      this.rosterAt = now
       const list = []
+      const state = []
+      let sig = ''
       for (const e of this.ents.values()) {
         if (e.zone === 'limbo') continue
+        const streak = e.alive && e.arena === 'ffa' ? e.lifeKills : 0
+        const armor = e.zone === 'match' ? e.armor.tier : 'none'
+        const team = e.team ?? -1
         list.push({
           eid: e.eid,
           name: e.name,
@@ -1744,16 +2215,23 @@ export class GameHost {
           level: e.level || 1,
           vip: Boolean(e.vip),
           look: e.look || '',
-          team: e.team ?? -1,
+          team,
           zone: e.zone,
           arena: e.arena,
           alive: e.alive,
           kills: e.kills,
-          streak: e.alive && e.arena === 'ffa' ? e.lifeKills : 0,
-          armor: e.zone === 'match' ? e.armor.tier : 'none',
+          streak,
+          armor,
         })
+        sig += `${e.eid}|${e.name}|${e.bot ? 1 : 0}|${e.cape}|${e.sword}|${e.level || 1}|${e.vip ? 1 : 0}|${e.look || ''}\n`
+        state.push(e.eid, e.zone, e.arena || '', e.alive ? 1 : 0, e.kills || 0, streak || 0, armor, team)
       }
-      for (const member of this.members.values()) this.sendTo(member.cid, 'roster', { list })
+      if (sig !== this.rosterSig) {
+        this.rosterSig = sig
+        for (const member of this.members.values()) this.sendTo(member.cid, 'roster', { list })
+      } else {
+        for (const member of this.members.values()) this.sendTo(member.cid, 'rstate', { s: state })
+      }
     }
     for (const ent of this.ents.values()) {
       if (!ent.dirty || !ent.cid) continue
@@ -1774,6 +2252,7 @@ export class GameHost {
         kit: ent.kit,
         stats: ent.stats,
         shieldOff: Math.max(0, ent.shieldOffUntil - now),
+        air: ent.airBubbles ?? AIR.bubbles,
       })
     }
     // Positions: 20 Hz in arenas, 10 Hz in the lobby.
@@ -1788,13 +2267,18 @@ export class GameHost {
       if (!lists.has(key)) lists.set(key, [])
       const held = ITEM_IDS.indexOf(e.zone === 'lobby' ? LOBBY_SWORD : e.inv[e.sel]?.id || 'fist')
       const off = e.zone === 'lobby' ? 0 : ITEM_IDS.indexOf(e.inv[OFFHAND]?.id || 'fist')
-      const anim = e.blocking ? 5 : e.anim
+      // 16 = on fire (everyone sees the flames).
+      const anim = (e.blocking ? 5 : e.anim) | (e.effects.burn > now ? 16 : 0)
       lists.get(key).push(e.eid, Math.round(e.x * 100), Math.round(e.y * 100), Math.round(e.z * 100), Math.round(e.yaw * 100), Math.round(e.pitch * 100), anim, held, off)
     }
     for (const e of this.ents.values()) {
       if (!e.cid) continue
       if (e.zone === 'lobby') {
         if (lobbyTick) this.sendTo(e.cid, 'snap', { z: 'lobby', e: lists.get('lobby') || [] })
+      } else if (e.arena === 'ffa') {
+        // Spirelands is big and holds everyone: only the players within sight of you
+        // (past SNAP_RANGE they'd be specks anyway). Less to send, less to draw.
+        this.sendTo(e.cid, 'snap', { z: 'match', e: nearOnly(lists.get('ffa') || [], e.x, e.z) })
       } else if (e.arena) {
         this.sendTo(e.cid, 'snap', { z: 'match', e: lists.get(e.arena) || [] })
       }

@@ -35,6 +35,8 @@ export default function HUD() {
         )}
         {zone !== 'lobby' && <DuelTop />}
         {zone !== 'lobby' && <FfaTop />}
+        {/* Searching for a duel from Spirelands: the search, and the way out of it. */}
+        {zone !== 'lobby' && kind === 'ffa' && <QueueBar />}
       </div>
       {zone === 'lobby' && (
         <>
@@ -51,11 +53,6 @@ export default function HUD() {
           <StatsPanel />
         </>
       )}
-      {zone !== 'lobby' && (
-        <div className="absolute" style={{ left: u(14), top: u(14) }}>
-          <LeaveButton />
-        </div>
-      )}
       <Banner />
       <Countdown />
       {zone === 'lobby' && kind === 'lobby' && (
@@ -71,7 +68,9 @@ export default function HUD() {
       {kind === 'duel' && phase === 'vote' && <MapVote />}
       {panel === 'modes' && <ModesPanel />}
       {panel === 'inventory' && zone === 'match' && <InventoryPanel />}
-      <TopRight />
+      {/* Top right: your name, then Lobby (in a fight), chat and settings. The top left is
+          kept clear for the host's logos. */}
+      <TopRight>{zone !== 'lobby' && <LeaveButton />}</TopRight>
       <LevelUpBanner />
       <Toasts />
     </div>

@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { COMBAT, DUEL, FFA, HOTBAR, HP, INV_SIZE, MODES, OFFHAND } from '../../shared/balance.js'
+import { AIR, COMBAT, DUEL, FFA, FIRE, HOTBAR, HP, INV_SIZE, MODES, OFFHAND, RECIPES, WATER } from '../../shared/balance.js'
 import { GameHost } from '../../shared/host.js'
 import { ARENA_FLOOR } from '../../shared/maps.js'
 import { mulberry32 } from '../../shared/rng.js'
-import { B, blockKey } from '../../shared/voxel.js'
+import { B, blockKey, isWater, waterLevel } from '../../shared/voxel.js'
 
 /** A host on a fake clock, recording everything it sends. */
-function makeHost(seed = 1) {
+function makeHost(seed = 1, opts = {}) {
   const clock = { t: 1_000_000 }
   const sent = []
   const rewards = []
@@ -18,6 +18,7 @@ function makeHost(seed = 1) {
     now: () => clock.t,
     random: mulberry32(seed),
     log: () => {},
+    ...opts,
   })
   const tick = (ms) => {
     for (let i = 0; i < ms; i += 50) {
@@ -86,8 +87,24 @@ test('two players in the same queue: map vote, rounds, a winner, rewards, back t
   assert.equal(b.zone, 'lobby')
 })
 
-test('alone in the queue, a bot steps in; play again goes straight back in the queue', () => {
+test('online, duels are only against real players: alone in the queue, you wait', () => {
   const h = makeHost(4)
+  h.host.join('a', 'Ann')
+  h.host.message('a', 'queue', { mode: 'axe' })
+  h.tick(60_000)
+  assert.equal(h.host.arenas.size, 0, 'no bot ever steps in')
+  assert.ok(h.host.members.get('a').queue, 'still searching')
+  // Someone joins the queue: a duel between the two of them.
+  h.host.join('b', 'Bo')
+  h.host.message('b', 'queue', { mode: 'axe' })
+  h.tick(200)
+  const arena = [...h.host.arenas.values()][0]
+  assert.ok(arena)
+  assert.ok(arena.fighters.every((eid) => !h.host.ents.get(eid).bot), 'two real players')
+})
+
+test('test hosts with duelBots: alone in the queue, a bot steps in; play again goes straight back in the queue', () => {
+  const h = makeHost(4, { duelBots: true })
   h.host.join('a', 'Ann')
   h.host.message('a', 'queue', { mode: 'axe' })
   h.tick(DUEL.soloBotMs + 100)
@@ -318,7 +335,7 @@ test('Spirelands: pick a kit, kills heal and pay, death sends you to the kit pic
   h.tick(2000)
   const arena = host.arenas.get('ffa')
   const bots = [...host.ents.values()].filter((e) => e.bot && e.arena === 'ffa')
-  assert.equal(bots.length, Math.min(FFA.maxBots, FFA.population - 1))
+  assert.equal(bots.length, FFA.population - 1)
   // A kill: healed and counted.
   const victim = bots[0]
   me.hp = 8
@@ -349,7 +366,7 @@ test('Spirelands: pick a kit, kills heal and pay, death sends you to the kit pic
   assert.equal([...host.ents.values()].filter((e) => e.bot).length, 0)
 })
 
-test('Spirelands: bots fill in for a few players, all leave once five real players are in, and fifty fit', () => {
+test('Spirelands: bots fill in for a few players, bots fill Spirelands up to ten fighters, none from ten real players on, and a full server fits', () => {
   const h = makeHost(3)
   const { host } = h
   const bots = () => [...host.ents.values()].filter((e) => e.bot && e.arena === 'ffa')
@@ -361,17 +378,20 @@ test('Spirelands: bots fill in for a few players, all leave once five real playe
   }
   enter(0)
   h.tick(1000)
-  assert.equal(bots().length, FFA.maxBots, 'one player: bots to fight')
-  for (let n = 1; n < FFA.botsOffAt - 1; n += 1) enter(n)
+  assert.equal(bots().length, FFA.population - 1, 'one player: nine bots, ten fighters')
+  for (let n = 1; n < 5; n += 1) enter(n)
   h.tick(1000)
-  assert.ok(bots().length > 0, 'four players: still a bot or two')
-  enter(FFA.botsOffAt - 1)
+  assert.equal(bots().length, FFA.population - 5, 'five players: five bots')
+  for (let n = 5; n < FFA.population - 1; n += 1) enter(n)
+  h.tick(1000)
+  assert.equal(bots().length, 1, 'nine players: one bot')
+  enter(FFA.population - 1)
   h.tick(200)
-  assert.equal(bots().length, 0, 'five real players: the bots are gone')
+  assert.equal(bots().length, 0, 'ten real players: the bots are gone')
   h.tick(FFA.botRespawnMs + 2000)
   assert.equal(bots().length, 0, 'and they stay gone')
   // A full server: everyone in Spirelands, alive and fighting.
-  for (let n = FFA.botsOffAt; n < FFA.maxPlayers; n += 1) enter(n)
+  for (let n = FFA.population; n < FFA.maxPlayers; n += 1) enter(n)
   h.tick(500)
   const people = [...host.ents.values()].filter((e) => !e.bot && e.arena === 'ffa' && e.alive)
   assert.equal(people.length, FFA.maxPlayers)
@@ -380,4 +400,261 @@ test('Spirelands: bots fill in for a few players, all leave once five real playe
   for (let n = 3; n < FFA.maxPlayers; n += 1) host.leave(`p${n}`)
   h.tick(2000)
   assert.ok(bots().length > 0, 'three left: bots fill in again')
+})
+
+test('mining fills your inventory; crafting turns it into gear', () => {
+  const h = duelOf('uhc')
+  const { host, arena, a } = h
+  faceOff(h, a, h.b)
+  const c = arena.center
+  const planks = () => host.count(a, 'planks')
+  // In a duel you can only break what was placed: place a block, mine it back.
+  const before = planks()
+  a.sel = a.inv.findIndex((s) => s?.id === 'planks')
+  const x = Math.floor(c.x) + 1
+  const y = ARENA_FLOOR + 1
+  const z = Math.floor(c.z) - 1
+  host.message('a', 'place', { x, y, z })
+  assert.equal(arena.world.get(x, y, z), B.PLANKS)
+  assert.equal(planks(), before - 1)
+  host.message('a', 'dig', { x, y, z })
+  h.clock.t += 3000
+  host.message('a', 'break', { x, y, z })
+  assert.equal(arena.world.get(x, y, z), B.AIR)
+  assert.equal(planks(), before, 'the mined block came back')
+  assert.ok(h.sent.some((m) => m.cid === 'a' && m.type === 'pickup' && m.payload.id === 'planks'))
+
+  // Crafting: a shield from six planks; obsidian from stone bricks.
+  const shields = host.count(a, 'shield')
+  host.message('a', 'craft', { id: 'shield' })
+  assert.equal(host.count(a, 'shield'), shields + 1)
+  assert.equal(planks(), before - 6)
+  const bricks = host.count(a, 'stone_bricks')
+  host.message('a', 'craft', { id: 'obsidian' })
+  assert.equal(host.count(a, 'obsidian'), 2)
+  assert.equal(host.count(a, 'stone_bricks'), bricks - 4)
+  assert.ok(h.sent.some((m) => m.cid === 'a' && m.type === 'crafted' && m.payload.id === 'obsidian'))
+  // Not enough: nothing happens.
+  for (const s of a.inv) if (s?.id === 'planks') s.n = 1
+  host.message('a', 'craft', { id: 'shield' })
+  assert.equal(host.count(a, 'shield'), shields + 1)
+  assert.ok(RECIPES.every((r) => r.need.length && r.out[1] > 0))
+})
+
+test('a fire arrow sets the ground and its target alight; water puts it out', () => {
+  const h = duelOf('uhc')
+  const { host, arena, a, b } = h
+  faceOff(h, a, b)
+  const c = arena.center
+  // Shot at the floor in front of you: a small patch catches.
+  a.sel = a.inv.findIndex((s) => s?.id === 'flame_bow')
+  assert.ok(a.sel >= 0, 'UHC has a fire bow')
+  b.x = c.x + 6
+  host.useItem(a, a.sel, [0, -1, -0.6], 1)
+  h.tick(600)
+  const fires = () => {
+    let n = 0
+    const w = arena.world
+    for (let x = 0; x < w.sx; x += 1) for (let z = 0; z < w.sz; z += 1) for (let y = ARENA_FLOOR; y < ARENA_FLOOR + 4; y += 1) if (w.get(x, y, z) === B.FIRE) n += 1
+    return n
+  }
+  const lit = fires()
+  assert.ok(lit > 0 && lit <= FIRE.cells, `a small patch burns (${lit})`)
+  assert.ok(h.sent.some((m) => m.type === 'ignite'))
+  // Walk into it: you burn, and it hurts every second (armour doesn't help).
+  const f = arena.fires[0]
+  Object.assign(b, { x: f.x + 0.5, y: f.y, z: f.z + 0.5, hurtUntil: 0 })
+  const hp = b.hp
+  h.tick(100)
+  assert.ok(b.effects.burn > h.clock.t, 'on fire')
+  Object.assign(b, { x: c.x + 6, z: c.z + 6 })
+  h.tick(2100)
+  assert.ok(b.hp < hp, 'burning hurts')
+  assert.equal(b.lastHitBy?.eid ?? a.eid, a.eid)
+  // A water bucket tipped over yourself puts it out.
+  b.inv[b.sel] = { id: 'water_bucket', n: 1 }
+  host.message('b', 'use', {})
+  assert.equal(b.effects.burn, undefined, 'out')
+  assert.equal(b.inv[b.sel].id, 'bucket', 'the bucket is empty now')
+  // The flames burn out on their own.
+  h.tick(FIRE.lifeMs + 2000)
+  assert.equal(fires(), 0)
+})
+
+test('buckets: pour water (it douses flames), scoop it back up', () => {
+  const h = duelOf('uhc')
+  const { host, arena, a, b } = h
+  faceOff(h, a, b)
+  const c = arena.center
+  a.sel = a.inv.findIndex((s) => s?.id === 'water_bucket')
+  const x = Math.floor(c.x) + 1
+  const y = ARENA_FLOOR + 1
+  const z = Math.floor(c.z) - 1
+  // Some fire right next to where it's poured, and someone burning there.
+  host.igniteAt(arena, x + 1.5, y, z + 0.5, b.eid)
+  assert.ok(arena.fires.length > 0)
+  b.effects.burn = h.clock.t + 3000
+  Object.assign(b, { x: x + 0.5, y, z: z + 1.5 })
+  host.message('a', 'place', { x, y, z })
+  assert.equal(arena.world.get(x, y, z), B.WATER)
+  assert.equal(a.inv[a.sel].id, 'bucket')
+  assert.equal(b.effects.burn, undefined, 'the splash put them out')
+  assert.ok(arena.fires.every((f) => Math.hypot(f.x - x, f.z - z) > FIRE.douse), 'nearby flames went out')
+  assert.ok(h.sent.some((m) => m.type === 'douse'))
+  // Scoop it back: the bucket is full again and the water is gone.
+  host.message('a', 'use', { x, y, z })
+  assert.equal(a.inv[a.sel].id, 'water_bucket')
+  assert.equal(arena.world.get(x, y, z), B.AIR)
+  // Junk targets do nothing.
+  a.inv[a.sel] = { id: 'bucket', n: 1 }
+  host.message('a', 'use', { x: 'nope' })
+  host.message('a', 'use', { x: c.x, y: ARENA_FLOOR, z: c.z })
+  assert.equal(a.inv[a.sel].id, 'bucket')
+})
+
+test('two people searching different modes are paired at once, in the mode of whoever waited longer', () => {
+  const h = makeHost(6)
+  const { host } = h
+  host.join('a', 'Ann')
+  host.join('b', 'Bo')
+  host.join('c', 'Cy')
+  host.join('d', 'Di')
+  host.message('a', 'queue', { mode: 'strafex' })
+  h.tick(400)
+  host.message('b', 'queue', { mode: 'pot' })
+  h.tick(200)
+  const arenas = () => [...host.arenas.values()].filter((x) => x.kind === 'duel')
+  assert.equal(arenas().length, 1, 'paired straight away')
+  const arena = arenas()[0]
+  assert.equal(arena.mode, 'strafex', 'Ann was waiting first')
+  assert.ok(arena.fighters.includes(host.entOf('a').eid) && arena.fighters.includes(host.entOf('b').eid))
+  // Same mode still goes first: Cy and Di both pick sword; nobody is left waiting.
+  host.message('c', 'queue', { mode: 'sword' })
+  host.message('d', 'queue', { mode: 'sword' })
+  h.tick(200)
+  assert.equal(arenas().length, 2)
+  assert.equal(arenas()[1].mode, 'sword')
+})
+
+test('water flows: a poured source falls and spreads up to 7 blocks, and dries up when scooped', () => {
+  const h = duelOf('uhc')
+  const { host, arena, a, b } = h
+  faceOff(h, a, b)
+  const c = arena.center
+  const w = arena.world
+  const y = ARENA_FLOOR + 1
+  const x = Math.floor(c.x) - 4
+  const z = Math.floor(c.z) - 4
+  // A pillar to pour from: water on top of it falls to the floor and spreads.
+  for (let k = 0; k < 2; k += 1) w.set(x, y + k, z, B.STONE_BRICKS)
+  a.x = x + 1.5
+  a.z = z + 1.5
+  a.sel = a.inv.findIndex((s) => s?.id === 'water_bucket')
+  host.message('a', 'place', { x, y: y + 2, z })
+  assert.equal(w.get(x, y + 2, z), B.WATER, 'the source on the pillar')
+  h.tick(WATER.stepMs * 30)
+  assert.ok(isWater(w.get(x + 1, y + 2, z)), 'spreads off the top')
+  assert.ok(isWater(w.get(x + 1, y, z)), 'and falls to the floor')
+  // On the floor it spreads, weaker each block, never past level 7.
+  let far = 0
+  for (let d = 1; d < 14; d += 1) if (isWater(w.get(x + d, y, z))) far = d
+  assert.ok(far >= 4 && far <= 9, `spread ${far} blocks along the floor`)
+  for (let d = 1; d <= far; d += 1) assert.ok(waterLevel(w.get(x + d, y, z)) <= 7)
+  // Scoop the source: everything that came from it dries up.
+  host.message('a', 'use', { x, y: y + 2, z })
+  assert.equal(a.inv[a.sel].id, 'water_bucket')
+  h.tick(WATER.stepMs * 40)
+  let left = 0
+  for (let dx = -10; dx <= 10; dx += 1) for (let dz = -10; dz <= 10; dz += 1) for (let dy = 0; dy < 4; dy += 1) if (isWater(w.get(x + dx, y + dy, z + dz))) left += 1
+  assert.equal(left, 0, 'all dried up')
+})
+
+test('drowning: head under water uses up your air, then hurts; air comes back on the surface', () => {
+  const h = duelOf('uhc')
+  const { host, arena, a, b } = h
+  faceOff(h, a, b)
+  const w = arena.world
+  const c = arena.center
+  const x = Math.floor(c.x) - 3
+  const z = Math.floor(c.z) + 3
+  const y = ARENA_FLOOR + 1
+  // A deep pool of still water round the player, walled in.
+  for (let dy = 0; dy < 3; dy += 1) w.set(x, y + dy, z, B.WATER)
+  Object.assign(a, { x: x + 0.5, y, z: z + 0.5 })
+  const hp = a.hp
+  h.tick(AIR.ms - 1000)
+  assert.ok(a.airBubbles < AIR.bubbles && a.airBubbles > 0, 'running out of air')
+  assert.equal(a.hp, hp, 'not hurt yet')
+  h.tick(2600)
+  assert.ok(a.hp < hp, 'drowning')
+  // Back to the surface: breath returns.
+  Object.assign(a, { x: c.x + 6, y, z: c.z + 6 })
+  h.tick(2500)
+  assert.equal(a.airBubbles, AIR.bubbles)
+  const me = h.sent.filter((m) => m.cid === 'a' && m.type === 'me').at(-1)
+  assert.equal(me.payload.air, AIR.bubbles)
+})
+
+test('torches and campfires: crafted from wood; a campfire warms (heals) those beside it and burns whoever stands in it', async () => {
+  const { CAMPFIRE } = await import('../../shared/balance.js')
+  const h = duelOf('uhc')
+  const { host, arena, a, b } = h
+  faceOff(h, a, b)
+  const c = arena.center
+  // Wood into light.
+  host.message('a', 'craft', { id: 'torch' })
+  assert.equal(host.count(a, 'torch'), 4)
+  host.message('a', 'craft', { id: 'campfire' })
+  assert.equal(host.count(a, 'campfire'), 1)
+  // Place the campfire on the floor beside Ann.
+  const x = Math.floor(c.x) + 2
+  const y = ARENA_FLOOR + 1
+  const z = Math.floor(c.z) - 2
+  a.sel = a.inv.findIndex((s) => s?.id === 'campfire')
+  host.message('a', 'place', { x, y, z })
+  assert.equal(arena.world.get(x, y, z), B.CAMPFIRE)
+  assert.ok(arena.campfires.has(blockKey(x, y, z)))
+  // Sitting beside it, hurt: it heals slowly.
+  Object.assign(a, { x: x + 2.5, y, z: z + 0.5, hp: 10, lastHurtAt: h.clock.t })
+  h.tick(CAMPFIRE.everyMs * 3 + 100)
+  assert.ok(a.hp > 10, 'warmed back up')
+  // Standing in it burns.
+  Object.assign(b, { x: x + 0.5, y, z: z + 0.5, hurtUntil: 0 })
+  h.tick(200)
+  assert.ok(b.effects.burn > h.clock.t, 'on fire')
+})
+
+test('search for a duel while playing Spirelands: the moment an opponent turns up, you are pulled into the duel', () => {
+  const h = makeHost(9)
+  const { host } = h
+  host.join('a', 'Ann')
+  host.message('a', 'queue', { mode: 'sword' })
+  host.message('a', 'ffa', {})
+  host.message('a', 'kit', { mode: 'uhc' })
+  h.tick(300)
+  const a = host.entOf('a')
+  assert.equal(a.arena, 'ffa', 'fighting in Spirelands')
+  assert.equal(host.members.get('a').queue, 'sword', 'still searching')
+  const phase = h.sent.filter((m) => m.cid === 'a' && m.type === 'phase').at(-1).payload
+  assert.equal(phase.kind, 'ffa')
+  assert.equal(phase.queue, 'sword', 'the queue bar shows in there')
+  // Back to the lobby and in again: the search goes on.
+  host.message('a', 'lobby', {})
+  assert.equal(host.members.get('a').queue, 'sword')
+  host.message('a', 'ffa', {})
+  host.message('a', 'kit', { mode: 'uhc' })
+  h.tick(300)
+  // Someone else searches (any mode): a duel, and Ann is brought out of Spirelands to it.
+  host.join('b', 'Bo')
+  host.message('b', 'queue', { mode: 'axe' })
+  h.tick(300)
+  const duel = [...host.arenas.values()].find((x) => x.kind === 'duel')
+  assert.ok(duel, 'paired')
+  assert.equal(duel.mode, 'sword', 'Ann searched first')
+  assert.notEqual(a.arena, 'ffa', 'out of Spirelands')
+  assert.equal(host.members.get('a').duel, duel.key)
+  assert.ok(h.sent.some((m) => m.cid === 'a' && m.type === 'lobby'), 'back to the lobby for the vote')
+  h.tick(DUEL.voteMs + DUEL.countdownMs + 400)
+  assert.equal(duel.phase, 'fight')
+  assert.equal(a.arena, duel.key)
 })

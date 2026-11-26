@@ -27,6 +27,7 @@ function makeRemote(eid) {
     anim: 0,
     held: 'fist',
     off: 'fist',
+    burning: false,
     walkPhase: 0,
     speed: 0,
     swingAt: 0,
@@ -58,7 +59,9 @@ export function applySnapshot(zone, e) {
       r.z = e[i + 3] / 100
     }
     r.seenAt = now
-    r.anim = e[i + 6]
+    // The low bits are the animation; 16 means on fire.
+    r.anim = e[i + 6] & 15
+    r.burning = (e[i + 6] & 16) !== 0
     r.held = ITEM_IDS[e[i + 7]] || 'fist'
     r.off = ITEM_IDS[e[i + 8]] || 'fist'
     // Snapshot entries are recycled: no garbage at 20 Hz x 8 players.
@@ -76,8 +79,9 @@ export function applySnapshot(zone, e) {
     if (r.seenAt === now) continue
     releaseSnaps(r)
     runtime.remotes.delete(eid)
-    // Gone from the round (eliminated, fell, left): a puff of smoke where they stood.
-    if (viewing === 'match' && now - r.firstSeen > 500) pushFx({ type: 'poof', x: r.x, y: r.y + 0.9, z: r.z })
+    // Gone from the round (eliminated, fell, left): a puff of smoke where they stood -
+    // unless they just walked out of range (Spirelands only sends who's near you).
+    if (viewing === 'match' && now - r.firstSeen > 500 && (r.camDist ?? 0) < 90) pushFx({ type: 'poof', x: r.x, y: r.y + 0.9, z: r.z })
   }
 }
 

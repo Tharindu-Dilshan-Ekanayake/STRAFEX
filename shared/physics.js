@@ -7,14 +7,14 @@
  * fast knockback can't tunnel through a wall.
  */
 
-import { B } from './voxel.js'
+import { B, isWater } from './voxel.js'
 
 /** Swimming: how fast you swim up (holding jump), sink, and move through water. */
 export const SWIM = { up: 4.4, upAccel: 30, gravity: 7, maxSink: 3.5, speed: 0.6, climbOut: 7 }
 
 /** Is the body at feet (x, y, z) in water (feet or chest)? */
 export function inWater(world, x, y, z) {
-  return world.get(x, y + 0.3, z) === B.WATER || world.get(x, y + 1.1, z) === B.WATER
+  return isWater(world.get(x, y + 0.3, z)) || isWater(world.get(x, y + 1.1, z))
 }
 
 /** A jump pad's launch (blocks/s up): about 8 blocks high. */

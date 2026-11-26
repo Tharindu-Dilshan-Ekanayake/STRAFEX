@@ -1,4 +1,4 @@
-import { B, BLOCKS } from '@shared/voxel'
+import { B, BLOCKS, isWater } from '@shared/voxel'
 
 import { tileUV } from '../art/atlasLayout'
 import { SUN } from '../sun'
@@ -52,15 +52,23 @@ const KIND = new Uint8Array(256) // 0 none, 1 solid, 2 cutout, 3 cross
 const CASTS = new Uint8Array(256)
 const MOTION = new Uint8Array(256)
 const UVS = []
+/** How far each block's light reaches at night (0 = gives none). */
+const LIGHT = new Uint8Array(256)
+/** The farthest any light reaches: light sources this far outside a chunk still light it. */
+const MAX_REACH = 10
+// The light sources round the chunk being meshed: x, y, z (cell centres) and reach.
+let srcN = 0
+let src = new Float32Array(4 * 256)
 for (let id = 0; id < BLOCKS.length; id += 1) {
   const def = BLOCKS[id]
   if (!def) continue
   // Water hides nothing behind it: the sea floor and the banks show through.
-  OPAQUE[id] = def.render === 'solid' && id !== B.WATER ? 1 : 0
+  OPAQUE[id] = def.render === 'solid' && !isWater(id) ? 1 : 0
   KIND[id] = { none: 0, solid: 1, cutout: 2, cross: 3 }[def.render] ?? 0
-  CASTS[id] = (def.render === 'solid' && id !== B.WATER) || id === B.LEAVES ? 1 : 0
-  MOTION[id] = id === B.LEAVES ? 1 : def.render === 'cross' ? 2 : id === B.WATER ? 3 : 0
+  CASTS[id] = (def.render === 'solid' && !isWater(id)) || id === B.LEAVES ? 1 : 0
+  MOTION[id] = id === B.LEAVES ? 1 : def.render === 'cross' ? 2 : isWater(id) ? 3 : 0
   UVS[id] = def.tex.map((name) => (name ? tileUV(name) : [0, 0, 0, 0]))
+  LIGHT[id] = def.light || 0
 }
 
 function makeBuffer(cap) {
@@ -87,7 +95,32 @@ function grow(buf) {
 }
 
 /** Scratch output: `solid` and `cutout` (leaves, glass, flowers) meshes of the last chunk. */
+/**
+ * The chunk's meshes. Each vertex's `tile.z` holds its motion (0 none, 1 leaves, 2 plants,
+ * 3 water) plus 4 x its block light (0-15: how lit it is by torches, campfires, lanterns
+ * and fire nearby) - the terrain shader shows that light at night.
+ */
 export const out = { solid: makeBuffer(16384), cutout: makeBuffer(4096) }
+
+/** How lit the cell (x, y, z) is by the light sources near the chunk: 0-15. */
+function blockLight(x, y, z) {
+  if (!srcN) return 0
+  let best = 0
+  const cx = x + 0.5
+  const cy = y + 0.5
+  const cz = z + 0.5
+  for (let i = 0; i < srcN * 4; i += 4) {
+    const r = src[i + 3]
+    const dx = cx - src[i]
+    const dy = cy - src[i + 1]
+    const dz = cz - src[i + 2]
+    const d2 = dx * dx + dy * dy + dz * dz
+    if (d2 >= r * r) continue
+    const k = 1 - Math.sqrt(d2) / r
+    if (k > best) best = k
+  }
+  return Math.round(best * 15)
+}
 
 const to8 = (v) => (v > 255 ? 255 : v < 0 ? 0 : Math.round(v))
 
@@ -157,6 +190,9 @@ let colTop = new Int16Array(32 * 32)
 // Scratch for one slice of faces: merge key (0 none, -1 can't merge), and colours.
 let maskKey = new Float64Array(64 * 64)
 let maskRgb = new Uint8Array(64 * 64 * 12)
+/** Each face's block light (0-15), and how the merge key keeps different light apart. */
+let maskLight = new Uint8Array((64 * 64 * 12) / 12)
+const LIGHT_KEY = 2 ** 40
 let maskId = new Uint8Array(64 * 64)
 const pos4 = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]
 const rgb12 = new Uint8Array(12)
@@ -210,6 +246,33 @@ export function meshChunk(world, x0, z0, size) {
   if (yHi < 0) return out
   yLo = Math.max(0, yLo)
 
+  // The light sources in and round the chunk (their light crosses chunk edges).
+  srcN = 0
+  const lx0 = Math.max(0, x0 - MAX_REACH)
+  const lz0 = Math.max(0, z0 - MAX_REACH)
+  const lx1 = Math.min(sx, x1 + MAX_REACH)
+  const lz1 = Math.min(sz, z1 + MAX_REACH)
+  const ly0 = Math.max(0, yLo - MAX_REACH)
+  const ly1 = Math.min(sy - 1, yHi + MAX_REACH)
+  for (let y = ly0; y <= ly1; y += 1) {
+    for (let z = lz0; z < lz1; z += 1) {
+      for (let x = lx0; x < lx1; x += 1) {
+        const r = LIGHT[data[x + z * sx + y * layer]]
+        if (!r) continue
+        if ((srcN + 1) * 4 > src.length) {
+          const bigger = new Float32Array(src.length * 2)
+          bigger.set(src)
+          src = bigger
+        }
+        src[srcN * 4] = x + 0.5
+        src[srcN * 4 + 1] = y + 0.5
+        src[srcN * 4 + 2] = z + 0.5
+        src[srcN * 4 + 3] = r
+        srcN += 1
+      }
+    }
+  }
+
   /** Is the point (x, y, z) in the shadow of anything between it and the sun? */
   const shadowed = (px, py, pz) => {
     let x = px
@@ -249,7 +312,7 @@ export function meshChunk(world, x0, z0, size) {
             pos4[i][1] = y + shape[i][1]
             pos4[i][2] = z + shape[i][2]
           }
-          emit('cutout', pos4, rgb12, u0, v0, MOTION[id], ONE_ST)
+          emit('cutout', pos4, rgb12, u0, v0, MOTION[id] + 4 * blockLight(x, y, z), ONE_ST)
         }
       }
     }
@@ -268,6 +331,7 @@ export function meshChunk(world, x0, z0, size) {
       maskKey = new Float64Array(S * T)
       maskRgb = new Uint8Array(S * T * 12)
       maskId = new Uint8Array(S * T)
+      maskLight = new Uint8Array(S * T)
     }
     const tint = FACE_TINT[f]
     for (let slice = lo[d]; slice < hi[d]; slice += 1) {
@@ -286,17 +350,20 @@ export function meshChunk(world, x0, z0, size) {
           const kind = KIND[id]
           if (kind !== 1 && kind !== 2) continue
           const nb = get(x + n[0], y + n[1], z + n[2])
-          if (OPAQUE[nb] || ((kind === 2 || id === B.WATER) && nb === id)) continue
+          // No faces between leaves and leaves, or water and water (still or flowing).
+          if (OPAQUE[nb] || (kind === 2 && nb === id) || (MOTION[id] === 3 && MOTION[nb] === 3)) continue
           // The open sea's surface is the sea plane's job (one quad to the horizon).
-          if (f === 2 && id === B.WATER && y === world.seaLevel) continue
+          if (f === 2 && MOTION[id] === 3 && y === world.seaLevel) continue
           any = true
           maskId[m] = id
           const def = BLOCKS[id]
           const o = m * 12
+          const light = def.glow ? 15 : blockLight(x + n[0], y + n[1], z + n[2])
+          maskLight[m] = light
           if (def.glow) {
             const g = to8(255 * Math.max(0.88, face.s))
             maskRgb.fill(g, o, o + 12)
-            maskKey[m] = id * 16777216 + g * 65793
+            maskKey[m] = id * 16777216 + g * 65793 + light * LIGHT_KEY
             continue
           }
           const depth = colTop[(z - z0) * size + (x - x0)] - y
@@ -306,7 +373,7 @@ export function meshChunk(world, x0, z0, size) {
           let tg = tint[1]
           let tb = tint[2]
           // Sun: faces turned to it take more light, unless something casts a shadow.
-          if (face.sun > 0.05 && id !== B.WATER) {
+          if (face.sun > 0.05 && MOTION[id] !== 3) {
             if (shadowed(x + 0.5 + n[0] * 0.55, y + 0.5 + n[1] * 0.55, z + 0.5 + n[2] * 0.55)) {
               k *= 0.62
               tr *= SHADOW_TINT[0]
@@ -349,7 +416,7 @@ export function meshChunk(world, x0, z0, size) {
             maskRgb[o + i * 3 + 1] = to8(l * tg)
             maskRgb[o + i * 3 + 2] = to8(l * tb)
           }
-          maskKey[m] = uniform ? id * 16777216 + maskRgb[o] * 65536 + maskRgb[o + 1] * 256 + maskRgb[o + 2] : -1
+          maskKey[m] = uniform ? id * 16777216 + maskRgb[o] * 65536 + maskRgb[o + 1] * 256 + maskRgb[o + 2] + light * LIGHT_KEY : -1
         }
       }
       if (!any) continue
@@ -386,7 +453,7 @@ export function meshChunk(world, x0, z0, size) {
           const [u0, v0] = UVS[id][face.t]
           const o = m * 12
           for (let i = 0; i < 12; i += 1) rgb12[i] = maskRgb[o + i]
-          emit(KIND[id] === 2 ? 'cutout' : 'solid', pos4, rgb12, u0, v0, MOTION[id], st8)
+          emit(KIND[id] === 2 ? 'cutout' : 'solid', pos4, rgb12, u0, v0, MOTION[id] + 4 * maskLight[m], st8)
         }
       }
     }

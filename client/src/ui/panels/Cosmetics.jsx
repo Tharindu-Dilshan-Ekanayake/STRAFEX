@@ -157,7 +157,7 @@ export function CaseOpening({ result }) {
         {result.gift ? 'WELCOME GIFT · ' : ''}
         {c.name.toUpperCase()}
       </div>
-      <div className="mc-panel relative overflow-hidden" style={{ width: `min(92vw, ${u(760)})`, padding: `${u(12)} 0` }}>
+      <div className="mc-gui relative overflow-hidden" style={{ width: `min(92vw, ${u(760)})`, padding: `${u(12)} 0` }}>
         <div className="absolute left-1/2 top-0 z-10 h-full -translate-x-1/2" style={{ width: u(4), background: '#ffd23b', boxShadow: '0 0 8px #ffd23b' }} />
         <div ref={stripRef} className="flex" style={{ gap: 8, willChange: 'transform' }}>
           {strip.map((e, i) => (

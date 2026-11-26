@@ -2,13 +2,13 @@
  * Where each block tile sits in the terrain atlas (atlas.js paints it). Kept free of
  * three.js and the DOM so the mesh worker can use it too.
  *
- * 16x16 tiles in 20x20 cells (a 2-pixel gutter copying each tile's edge), 8 to a row.
+ * 16x16 tiles in 20x20 cells (a 2-pixel gutter copying each tile's edge), 9 to a row.
  */
 
 export const T = 16
 export const PAD = 2
 export const CELL = T + PAD * 2
-export const GRID = 8
+export const GRID = 9
 export const SIZE = CELL * GRID
 
 /** Tile order in the atlas; atlas.js has a painter for each. */
@@ -18,7 +18,8 @@ export const TILE_ORDER = [
   'wool_yellow', 'candy_pink', 'candy_stripe', 'frosting_top', 'frosting_side', 'glass', 'cage', 'lucky', 'lucky_rare', 'gold',
   'darkstone', 'tnt_side', 'tnt_top', 'lamp', 'cactus_side', 'cactus_top', 'path_top', 'flower_red', 'flower_yellow', 'tall_grass',
   'water', 'quartz', 'quartz_top', 'obsidian', 'crystal', 'corestone', 'clay_orange', 'clay_red', 'mossy_bricks', 'slate',
-  'pad_top', 'pad_side', 'azure', 'finish_top', 'hay_top', 'hay_side', 'mushroom', 'lantern', 'lantern_top',
+  'pad_top', 'pad_side', 'azure', 'finish_top', 'hay_top', 'hay_side', 'mushroom', 'lantern', 'lantern_top', 'fire',
+  'chest_top', 'chest_side', 'berry_bush', 'torch', 'campfire',
 ]
 const tileIndex = new Map(TILE_ORDER.map((name, i) => [name, i]))
 

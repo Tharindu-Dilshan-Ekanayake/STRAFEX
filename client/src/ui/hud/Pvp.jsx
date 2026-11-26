@@ -31,6 +31,7 @@ export function Keystrokes() {
       jump: el.querySelector('[data-k="jump"]'),
       attack: el.querySelector('[data-k="lmb"]'),
       use: el.querySelector('[data-k="rmb"]'),
+      interact: el.querySelector('[data-k="e"]'),
     }
     const keyList = Object.entries(keys)
     const lCps = el.querySelector('[data-c="l"]')
@@ -72,7 +73,7 @@ export function Keystrokes() {
     <div ref={root} className="keystrokes absolute" style={{ left: u(14), top: '34%' }}>
       <div />
       {key('w', 'W')}
-      <div />
+      {key('e', 'E')}
       {key('a', 'A')}
       {key('s', 'S')}
       {key('d', 'D')}
@@ -162,14 +163,14 @@ export function StatsPanel() {
     ['Best Combo', st.best, '#c9a6ff'],
   ]
   return (
-    <div className="stats-panel mc-panel absolute flex flex-col" style={{ right: u(14), top: '42%', padding: `${u(6)} ${u(10)}`, gap: u(1), minWidth: u(150) }}>
-      <div className="txt-o" style={{ fontSize: u(13), color: '#ffb21a', fontWeight: 700, letterSpacing: '0.04em' }}>
-        STRAFEX · {MODES[kit]?.name || (phase.kind === 'ffa' ? t('SPIRELANDS') : '')}
+    <div className="stats-panel mc-hud absolute flex flex-col" style={{ right: u(14), top: '42%', gap: u(2), minWidth: u(170), paddingBottom: u(5) }}>
+      <div className="mc-hud-title mc-text" style={{ fontSize: u(13), color: '#ffff55', padding: `${u(4)} ${u(8)}` }}>
+        {MODES[kit]?.name || (phase.kind === 'ffa' ? t('SPIRELANDS') : 'STRAFEX')}
       </div>
-      {rows.map(([label, value, color]) => (
-        <div key={label} className="txt-o flex justify-between" style={{ fontSize: u(13), gap: u(10) }}>
-          <span style={{ color: '#d9d2f0' }}>{t(label)}</span>
-          <span style={{ color, fontWeight: 700 }}>{value}</span>
+      {rows.map(([label, value]) => (
+        <div key={label} className="mc-text flex justify-between" style={{ fontSize: u(12), gap: u(12), padding: `0 ${u(8)}` }}>
+          <span>{t(label)}</span>
+          <span style={{ color: '#ff5555' }}>{value}</span>
         </div>
       ))}
     </div>

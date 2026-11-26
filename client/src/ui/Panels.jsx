@@ -28,7 +28,7 @@ function PanelBody({ panel }) {
   if (!Body) return null
   return (
     <div className="panel-wrap absolute inset-0 z-30 flex items-center justify-center bg-black/45" onPointerDown={(e) => e.target === e.currentTarget && close()}>
-      <div className="mc-panel pop-in relative flex flex-col text-white" style={{ width: `min(100%, ${u(760)})`, maxHeight: '100%', padding: u(16), gap: u(10) }}>
+      <div className="mc-gui pop-in relative flex flex-col" style={{ width: `min(100%, ${u(760)})`, maxHeight: '100%', padding: u(16), gap: u(10) }}>
         <div className="flex items-center justify-between">
           <Fancy size={32} from="#ffffff" to="#ffd23b">
             {t(titles[panel])}

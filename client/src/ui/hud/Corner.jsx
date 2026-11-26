@@ -7,8 +7,8 @@ import { actions } from '../../net/actions'
 import { useBloxity } from '../../bloxity/BloxityContext'
 import { useGame } from '../../store/game'
 import { u } from '../format'
-import GameIcon from '../GameIcon'
-import { Button, Fancy } from '../kit'
+import PixelIcon from '../PixelIcon'
+import { Fancy } from '../kit'
 import { t } from '../i18n'
 
 /** The corners and overlays shown everywhere: settings, quick chat, your name tag, the feed, toasts, level-ups. */
@@ -28,25 +28,25 @@ export function NameTag() {
   const name = identity?.displayName || identity?.username || profileName || 'Guest'
   const pfp = identity?.pfp
   return (
-    <div className="name-tag slide-in-right mc-panel" style={{ padding: `${u(5)} ${u(14)} ${u(5)} ${u(5)}`, gap: u(10) }}>
-      <div className="slot flex shrink-0 items-center justify-center overflow-hidden" style={{ width: u(46), height: u(46), padding: 0 }}>
+    <div className="name-tag slide-in-right mc-hud" style={{ padding: `${u(6)} ${u(14)} ${u(6)} ${u(6)}`, gap: u(10) }}>
+      <div className="mc-slot flex shrink-0 items-center justify-center overflow-hidden" style={{ width: u(46), height: u(46), padding: u(3) }}>
         {pfp ? (
           <img src={pfp} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} draggable={false} />
         ) : (
-          <span className="txt-o" style={{ fontSize: u(24), fontWeight: 700 }}>
+          <span className="mc-text" style={{ fontSize: u(24) }}>
             {name.slice(0, 1).toUpperCase()}
           </span>
         )}
       </div>
-      <div className="flex flex-col" style={{ lineHeight: 1.1 }}>
-        <span className="txt-o" style={{ fontSize: u(19), fontWeight: 700, maxWidth: u(220), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <div className="flex flex-col" style={{ lineHeight: 1.1, gap: u(3) }}>
+        <span className="mc-text" style={{ fontSize: u(17), maxWidth: u(220), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {vip ? `👑 ${name}` : name}
         </span>
-        <span className="txt-o" style={{ fontSize: u(14) }}>
-          <span style={{ color: '#ffd23b' }}>👑 {wins}</span> <span style={{ color: '#ff8a8a', marginLeft: u(8) }}>⚔ {kills}</span>
+        <span className="mc-text" style={{ fontSize: u(13) }}>
+          <span style={{ color: '#ffff55' }}>👑 {wins}</span> <span style={{ color: '#ff5555', marginLeft: u(8) }}>⚔ {kills}</span>
         </span>
-        <div className="flex items-center" style={{ gap: u(5), marginTop: u(2) }} title={`${xp} / ${need} XP`}>
-          <span className="np-lvl" style={{ display: 'inline-block', margin: 0 }}>
+        <div className="flex items-center" style={{ gap: u(6), marginTop: u(1) }} title={`${xp} / ${need} XP`}>
+          <span className="mc-level" style={{ fontSize: u(15) }}>
             {level}
           </span>
           {xpUntil > seenAt && (
@@ -54,8 +54,8 @@ export function NameTag() {
               2x XP
             </span>
           )}
-          <div style={{ width: u(110), height: u(8), borderRadius: u(4), background: 'rgba(0,0,0,0.45)', overflow: 'hidden' }}>
-            <div key={level} className="xp-fill" style={{ width: `${Math.min(100, (xp / need) * 100)}%`, height: '100%', background: 'linear-gradient(90deg, #7cf0ff, #5f8bff)' }} />
+          <div className="mc-xp" style={{ width: u(118), height: u(9) }}>
+            <div key={level} className="mc-xp-fill xp-fill" style={{ width: `${Math.min(100, (xp / need) * 100)}%` }} />
           </div>
         </div>
       </div>
@@ -68,11 +68,12 @@ export function NameTag() {
  * kill feed. Stacked in one flex column, so a taller name tag pushes the rest down
  * instead of covering it.
  */
-export function TopRight() {
+export function TopRight({ children }) {
   return (
     <div className="top-right absolute flex flex-col items-end" style={{ right: u(14), top: u(14), gap: u(10) }}>
       <NameTag />
-      <div className="tr-buttons relative flex" style={{ gap: u(10) }}>
+      <div className="tr-buttons relative flex items-center" style={{ gap: u(10) }}>
+        {children}
         <QuickChat />
         <SettingsButton />
       </div>
@@ -87,17 +88,17 @@ export function QuickChat() {
   const setOpen = useGame((s) => s.setQuickChat)
   return (
     <>
-      <Button
-        className="pointer-events-auto flex items-center justify-center"
-        color="#2b8fd8"
+      <button
+        type="button"
+        className="mc-stone pointer-events-auto flex items-center justify-center"
         title="Quick chat (T)"
-        style={{ width: u(52), height: u(52), padding: 0, fontSize: u(24) }}
+        style={{ width: u(50), height: u(50), padding: 0 }}
         onClick={() => setOpen(!open)}
       >
-        💬
-      </Button>
+        <PixelIcon name="chat" size={u(30)} className="" />
+      </button>
       {open && (
-        <div className="mc-panel pointer-events-auto pop-in absolute grid" style={{ right: 0, top: `calc(100% + ${u(8)})`, zIndex: 25, padding: u(8), gap: u(6), gridTemplateColumns: 'repeat(2, auto)' }}>
+        <div className="mc-hud pointer-events-auto pop-in absolute grid" style={{ right: 0, top: `calc(100% + ${u(8)})`, zIndex: 25, padding: u(8), gap: u(6), gridTemplateColumns: 'repeat(2, auto)' }}>
           {QUICK_CHAT.map((text, i) => (
             <button
               key={text}
@@ -125,18 +126,18 @@ export function QuickChat() {
 export function SettingsButton() {
   const open = useGame((s) => s.openPanel)
   return (
-    <Button
-      className="pointer-events-auto flex items-center justify-center"
-      color="#4b5563"
+    <button
+      type="button"
+      className="mc-stone pointer-events-auto flex items-center justify-center"
       title="Settings"
-      style={{ width: u(52), height: u(52), padding: 0 }}
+      style={{ width: u(50), height: u(50), padding: 0 }}
       onClick={() => {
         exitPointerLock()
         open('settings')
       }}
     >
-      <GameIcon name="gear" size={30} />
-    </Button>
+      <PixelIcon name="gear" size={u(30)} className="" />
+    </button>
   )
 }
 
@@ -179,7 +180,7 @@ export function KillFeed() {
   return (
     <div className="tr-feed flex flex-col items-end" style={{ gap: u(4) }}>
       {feed.map((f) => (
-        <div key={f.id} className="mc-panel txt-o slide-in-right" style={{ padding: `${u(3)} ${u(10)}`, fontSize: u(16) }}>
+        <div key={f.id} className="mc-hud txt-o slide-in-right" style={{ padding: `${u(3)} ${u(10)}`, fontSize: u(16) }}>
           {f.chat ? (
             <>
               <span style={{ color: f.team >= 0 && f.team < TEAMS.length ? TEAMS[f.team].color : '#9fe6ff' }}>{f.k}:</span> {f.v}
@@ -190,7 +191,7 @@ export function KillFeed() {
             </>
           ) : (
             <>
-              <span style={{ color: '#ff8a8a' }}>{f.v}</span> {f.how === 'left' ? 'left' : f.how === 'void' ? 'fell into the void' : f.how === 'fall' ? 'hit the ground too hard' : f.how === 'boom' ? 'blew up' : 'was eliminated'}
+              <span style={{ color: '#ff8a8a' }}>{f.v}</span> {f.how === 'left' ? 'left' : f.how === 'void' ? 'fell into the void' : f.how === 'fall' ? 'hit the ground too hard' : f.how === 'boom' ? 'blew up' : f.how === 'fire' ? 'burned' : f.how === 'drown' ? 'drowned' : 'was eliminated'}
             </>
           )}
         </div>

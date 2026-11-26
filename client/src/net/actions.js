@@ -37,6 +37,8 @@ export const actions = {
   swap: (a, b) => send('swap', { a, b }),
   /** The held item and the offhand trade places. */
   swapHands: () => send('swapHands'),
+  /** Make something from a recipe (shared/balance.js RECIPES). */
+  craft: (id) => send('craft', { id }),
   select: (slot) => send('sel', { slot }),
   /** A rewarded ad Boxity says was watched; the server verifies the token. */
   adReward: (placement, rewardToken) => send('adReward', { placement, rewardToken }),

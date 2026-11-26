@@ -21,16 +21,16 @@ export const PRESETS = {
     /** No realtime shadows on any preset: terrain shading is baked into the blocks. */
     shadows: 'none',
     particles: false,
-    /** Most player figures drawn at once (a full lobby: the nearest). */
-    maxFigures: 12,
+    /** Most player figures drawn at once (a full lobby or Spirelands: the nearest). */
+    maxFigures: 10,
     /** Sparkle effects (unused by STRAFEX: kept so old saved settings stay valid). */
     sparkles: false,
     /** Leaves and grass sway in the wind (a few shader instructions, no extra draws). */
     foliageSway: false,
     /** Strength of the terrain's colour grade (free: part of the terrain shader). */
     colorGrade: 1,
-    viewDistance: 96,
-    fogNear: 36,
+    viewDistance: 88,
+    fogNear: 34,
     cloudCount: 10,
     /** Max side of any generated texture. */
     maxTexture: 512,
@@ -38,10 +38,10 @@ export const PRESETS = {
     remoteDrawDistance: 110,
     /**
      * Characters drawn as their Bloxity avatar (you included; real players first, then
-     * the nearest); the rest blocky. A round has at most 8 fighters, so even on LOW
-     * everyone you can see is their avatar, near or far.
+     * the nearest); the rest blocky. A duel is two, so everyone you fight is their
+     * avatar; in a packed Spirelands the nearest six are (keeps phones in budget).
      */
-    avatarCount: 8,
+    avatarCount: 6,
     botAvatars: true,
     /** No avatar beyond this (blocks): as far as other players are drawn at all. */
     avatarDistance: 110,
@@ -64,7 +64,7 @@ export const PRESETS = {
     fogNear: 70,
     cloudCount: 18,
     maxTexture: 1024,
-    remoteDrawDistance: 150,
+    remoteDrawDistance: 140,
     avatarCount: 10,
     botAvatars: true,
     avatarDistance: 150,
@@ -86,7 +86,7 @@ export const PRESETS = {
     fogNear: 120,
     cloudCount: 40,
     maxTexture: 1024,
-    remoteDrawDistance: 200,
+    remoteDrawDistance: 140,
     avatarCount: 12,
     botAvatars: true,
     avatarDistance: 200,
@@ -192,6 +192,13 @@ export const useQuality = create((set, get) => ({
     if (renderStep + 1 < RENDER_SCALES.length) {
       console.info(`[quality] FPS under budget, rendering at ${RENDER_SCALES[renderStep + 1] * 100}%`)
       set({ renderStep: renderStep + 1 })
+      return
+    }
+    // Still too slow at the lowest resolution (a very weak GPU): edge smoothing off - it
+    // costs the most per pixel. The 3D view is rebuilt once for it.
+    if (!manual && get().antialias) {
+      console.info('[quality] FPS under budget at the lowest resolution: antialiasing off')
+      set((s) => ({ antialias: false, rebuild: s.rebuild + 1 }))
     }
   },
 

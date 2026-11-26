@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import { ARMOR, ARMOR_PIECES, HOTBAR, ITEMS, OFFHAND } from '@shared/balance'
+import { ARMOR, ARMOR_PIECES, HOTBAR, ITEMS, OFFHAND, RECIPES } from '@shared/balance'
 
 import { sfx } from '../../audio/sfx'
 import { itemIcon } from '../../game/art/items'
@@ -46,6 +46,57 @@ function Slot({ index, slot, picked, onPick, sword, label, big }) {
   )
 }
 
+/** How many of `id` the inventory holds. */
+const countOf = (inv, id) => inv.reduce((n, s) => (s?.id === id ? n + s.n : n), 0)
+
+/** One recipe: what it makes, what it takes (red if you're short), and the button. */
+function Recipe({ r, inv, sword }) {
+  const can = r.need.every(([id, n]) => countOf(inv, id) >= n)
+  return (
+    <button
+      type="button"
+      className={`mc-btn craft-row flex items-center text-left ${can ? '' : 'off'}`}
+      style={{ '--c': can ? '#2bb37a' : '#3b3352', gap: u(8), padding: `${u(5)} ${u(8)}` }}
+      disabled={!can}
+      onPointerDown={(e) => {
+        e.stopPropagation()
+        if (can) actions.craft(r.id)
+        else sfx.error()
+      }}
+    >
+      <span className="slot relative flex items-center justify-center" style={{ width: u(42), height: u(42), flex: 'none' }}>
+        <img src={itemIcon(r.out[0], sword)} alt="" className="pixelated" style={{ width: '72%', height: '72%' }} draggable={false} />
+        {r.out[1] > 1 && (
+          <span className="txt-o absolute" style={{ right: u(2), bottom: u(-2), fontSize: u(13), fontWeight: 700 }}>
+            {r.out[1]}
+          </span>
+        )}
+      </span>
+      <span className="flex min-w-0 flex-col" style={{ gap: u(2) }}>
+        <span className="txt-o" style={{ fontSize: u(13), fontWeight: 700 }}>
+          {t(ITEMS[r.out[0]].name)}
+        </span>
+        <span className="txt-o" style={{ fontSize: u(10), color: '#cfc6ee', lineHeight: 1.1 }}>
+          {t(r.blurb)}
+        </span>
+        <span className="flex items-center" style={{ gap: u(6) }}>
+          {r.need.map(([id, n]) => {
+            const have = countOf(inv, id)
+            return (
+              <span key={id} className="flex items-center" style={{ gap: u(2) }} title={ITEMS[id].name}>
+                <img src={itemIcon(id, sword)} alt="" className="pixelated" style={{ width: u(16), height: u(16) }} draggable={false} />
+                <span className="txt-o" style={{ fontSize: u(11), fontWeight: 700, color: have >= n ? '#7cff9e' : '#ff8a8a' }}>
+                  {Math.min(have, n)}/{n}
+                </span>
+              </span>
+            )
+          })}
+        </span>
+      </span>
+    </button>
+  )
+}
+
 export function InventoryPanel() {
   const inv = useGame((s) => s.me.inv)
   const armor = useGame((s) => s.me.armor)
@@ -70,7 +121,8 @@ export function InventoryPanel() {
   const row = (from, count) => Array.from({ length: count }, (_, k) => from + k)
   return (
     <div className="panel-wrap absolute inset-0 z-30 flex items-center justify-center bg-black/45" onPointerDown={(e) => e.target === e.currentTarget && close()}>
-      <div className="mc-panel pop-in pointer-events-auto flex flex-col text-white" style={{ padding: u(14), gap: u(10) }}>
+      <div className="mc-gui pop-in pointer-events-auto flex" style={{ padding: u(14), gap: u(16), maxHeight: '100%', overflowY: 'auto' }}>
+      <div className="flex flex-col" style={{ gap: u(10) }}>
         <div className="flex items-center justify-between" style={{ gap: u(16) }}>
           <Fancy size={28} from="#ffffff" to="#ffd23b">
             {t('INVENTORY')}
@@ -124,6 +176,19 @@ export function InventoryPanel() {
         <span className="txt-o" style={{ fontSize: u(12), color: '#bdb3e0' }}>
           {picked < 0 ? t('Click an item, then where it goes · E or Esc closes') : t('Now click where it goes (the same item stacks)')}
         </span>
+      </div>
+      {/* Crafting: what you mined turns into things that keep you alive. */}
+      <div className="craft-col flex flex-col" style={{ gap: u(6), width: u(250) }}>
+        <Fancy size={22} from="#ffffff" to="#7cff9e">
+          {t('CRAFTING')}
+        </Fancy>
+        <span className="txt-o" style={{ fontSize: u(11), color: '#cfc6ee', lineHeight: 1.2 }}>
+          {t('Blocks you mine land in your inventory. Turn them into gear:')}
+        </span>
+        {RECIPES.map((r) => (
+          <Recipe key={r.id} r={r} inv={inv} sword={sword} />
+        ))}
+      </div>
       </div>
     </div>
   )

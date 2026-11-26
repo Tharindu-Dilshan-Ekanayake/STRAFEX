@@ -19,20 +19,24 @@ export const DUEL = {
   betweenMs: 2_800,
   /** The duel's winner on screen before both go back to the lobby. */
   endMs: 6_500,
-  /** Alone in a queue this long (online), you get a bot. Alone on the server: `soloBotMs`. */
+  /**
+   * Duels are against real players: you wait in the queue until someone else joins it,
+   * online and offline. (`botFillMs` / `soloBotMs` only apply to test hosts made with
+   * `duelBots`.)
+   */
   botFillMs: 8_000,
   soloBotMs: 2_200,
 }
 
 /** Spirelands, the free-for-all world. */
 export const FFA = {
-  /** People + bots the world is kept at (bots fill the gap, up to `maxBots`). */
-  population: 6,
-  maxBots: 4,
-  /** This many real players in Spirelands and the bots all leave: people only from then on. */
-  botsOffAt: 5,
+  /**
+   * Spirelands is kept at this many fighters: bots fill the places real players don't
+   * (1 player: 9 bots ... 9 players: 1 bot); from this many real players on, no bots.
+   */
+  population: 10,
   /** Everyone a server holds can be in Spirelands at once. */
-  maxPlayers: 50,
+  maxPlayers: 30,
   /** A dead bot comes back after this. */
   botRespawnMs: 6_000,
   /** Broken ground grows back and placed blocks crumble after this. */
@@ -120,7 +124,10 @@ export function armorReduce(dmg, points, tough) {
  *   (axe: also knocks a raised shield down; mace: smashes harder the further you fell;
  *   spear: longer reach, right click lunges forward)
  * - shield: hold right click (with a weapon or the shield in hand) to block from the front
- * - bow: shoots arrows; the stack count is its arrows
+ * - bow: shoots arrows; the stack count is its arrows (`fire`: they set where they land
+ *   alight, and whoever they hit burns)
+ * - bucket: right click water to fill it; a full one pours water (puts out fire - on you
+ *   too - and breaks a fall into it)
  * - throw: thrown projectile (pearl teleports you, gust bursts and launches everyone near)
  * - splash: a thrown potion that heals everyone where it breaks
  * - crystal: placed on obsidian or corestone; hit it and it explodes
@@ -153,7 +160,103 @@ export const ITEMS = {
   sandstone: { name: 'Sandstone', kind: 'block', block: B.SANDSTONE, icon: 'block', stack: 64 },
   dirt: { name: 'Dirt', kind: 'block', block: B.DIRT, icon: 'block', stack: 64 },
   obsidian: { name: 'Obsidian', kind: 'block', block: B.OBSIDIAN, icon: 'block', stack: 64 },
+  flame_bow: { name: 'Fire Bow', kind: 'bow', fire: true, dmg: 5, icon: 'bow', color: '#ff7a1a', stack: 32 },
+  bucket: { name: 'Bucket', kind: 'bucket', icon: 'bucket', stack: 1 },
+  water_bucket: { name: 'Water Bucket', kind: 'bucket', fill: 'water', icon: 'bucket', color: '#3f8cff', stack: 1 },
+  // Picked from bushes in Spirelands: eat one and for a few seconds you jump ten times as high.
+  jump_berry: { name: 'Jump Berry', kind: 'food', heal: 1, effect: 'leap', dur: 8, icon: 'berry', stack: 64 },
+  // Light for the night (crafted from wood). `sprite`: shown as a picture, not a cube.
+  torch: { name: 'Torch', kind: 'block', block: B.TORCH, icon: 'torch', sprite: true, stack: 64 },
+  campfire: { name: 'Campfire', kind: 'block', block: B.CAMPFIRE, icon: 'campfire', sprite: true, stack: 16 },
 }
+
+/** A campfire warms whoever is within `radius`: `heal` every `everyMs`. */
+export const CAMPFIRE = {
+  radius: 3.5,
+  heal: 1,
+  everyMs: 2_000,
+}
+
+/**
+ * Fire from fire arrows: a small patch where one lands (up to `cells`, within `radius`)
+ * burns for `lifeMs`. Hit by one, or standing in flames, you burn for `burnMs`, losing
+ * `dmg` every `tickMs` (armour doesn't help). Water - a bucket's, or jumping in - puts
+ * it out.
+ */
+export const FIRE = {
+  radius: 1.4,
+  cells: 5,
+  lifeMs: 6_000,
+  burnMs: 4_000,
+  tickMs: 1_000,
+  dmg: 1,
+  /** Most flames in one world at once. */
+  max: 60,
+  /** A poured bucket puts out flames this far away (and anyone burning nearby). */
+  douse: 2.6,
+}
+
+/**
+ * Flowing water: it settles a step every `stepMs` (falls first, then spreads up to 7 blocks
+ * from its source), at most `perStep` blocks a step per world.
+ */
+export const WATER = {
+  stepMs: 250,
+  perStep: 300,
+}
+
+/**
+ * Spirelands' loot chests: opening one gives `rolls` picks from `table` ([item, count,
+ * weight]); the chest is gone until it fills again after `refillMs`.
+ */
+export const LOOT = {
+  rolls: 3,
+  refillMs: 45_000,
+  table: [
+    ['gapple', 2, 10],
+    ['pearl', 2, 8],
+    ['splash_heal', 2, 8],
+    ['planks', 32, 10],
+    ['stone_bricks', 16, 8],
+    ['flame_bow', 8, 6],
+    ['water_bucket', 1, 6],
+    ['gust', 4, 6],
+    ['shield', 1, 5],
+    ['potion_speed', 1, 5],
+    ['potion_strength', 1, 4],
+    ['obsidian', 8, 3],
+    ['diamond_axe', 1, 3],
+    ['bucket', 1, 3],
+    ['charm', 1, 2],
+    ['jump_berry', 3, 8],
+  ],
+}
+
+/**
+ * Breath: with your head under water you have `ms` of air (shown as `bubbles`); then you
+ * drown, losing `dmg` every `tickMs`. Out of the water it comes back `refill` times as fast.
+ */
+export const AIR = {
+  ms: 10_000,
+  bubbles: 10,
+  dmg: 2,
+  tickMs: 1_000,
+  refill: 5,
+}
+
+/**
+ * Crafting (E in a fight): what you mine goes into your inventory (in a duel, the blocks
+ * you placed; in Spirelands, anything), and turns into things that keep you alive.
+ */
+export const RECIPES = [
+  { id: 'shield', out: ['shield', 1], need: [['planks', 6]], blurb: 'Block hits from the front' },
+  { id: 'obsidian', out: ['obsidian', 2], need: [['stone_bricks', 4]], blurb: 'Blast-proof walls' },
+  { id: 'bucket', out: ['bucket', 1], need: [['stone_bricks', 3]], blurb: 'Carry water: put out fire' },
+  { id: 'flame_bow', out: ['flame_bow', 8], need: [['planks', 3], ['stone_bricks', 1]], blurb: 'Arrows that set the ground alight' },
+  { id: 'gapple', out: ['gapple', 1], need: [['jump_berry', 4]], blurb: 'Heals and shields you' },
+  { id: 'torch', out: ['torch', 4], need: [['planks', 2]], blurb: 'Light the night' },
+  { id: 'campfire', out: ['campfire', 1], need: [['planks', 4], ['stone_bricks', 2]], blurb: 'Big light; sit by it to heal' },
+]
 
 /** Melee weapons (what a hit counts as, and what bots pick to fight with). */
 export const MELEE_KINDS = new Set(['sword', 'axe', 'mace', 'spear', 'none', 'shield'])
@@ -182,6 +285,8 @@ export const breakSeconds = (hard) => hard
 export const EFFECTS = {
   speed: { speedMul: 1.3 },
   jump: { jumpMul: 1.3 },
+  /** Jump berries: about ten times as high (3.2x the speed), and no fall damage meanwhile. */
+  leap: { jumpMul: 3.2 },
   strength: { dmgAdd: 3 },
   regen: {},
   burn: {},
@@ -218,7 +323,7 @@ export const MODES = {
     armor: 'diamond',
     regen: false,
     ft: 2,
-    hotbar: [['diamond_sword', 1], ['mace', 1], ['gust', 8], ['bow', 12], ['gapple', 6], ['wool', 64], ['planks', 64], ['pearl', 2]],
+    hotbar: [['diamond_sword', 1], ['mace', 1], ['gust', 8], ['bow', 12], ['gapple', 6], ['wool', 64], ['planks', 64], ['pearl', 2], ['water_bucket', 1]],
     offhand: ['charm', 1],
     bag: [['gust', 8], ['gapple', 4], ['wool', 64], ['pearl', 2]],
   },
@@ -261,7 +366,7 @@ export const MODES = {
     armor: 'diamond',
     regen: false,
     ft: 2,
-    hotbar: [['diamond_sword', 1], ['diamond_axe', 1], ['bow', 16], ['gapple', 6], ['planks', 64], ['stone_bricks', 64]],
+    hotbar: [['diamond_sword', 1], ['diamond_axe', 1], ['bow', 16], ['gapple', 6], ['planks', 64], ['stone_bricks', 64], ['water_bucket', 1], ['flame_bow', 8]],
     offhand: ['shield', 1],
     bag: [['planks', 64], ['gapple', 2]],
   },
@@ -303,7 +408,7 @@ export const MODES = {
     armor: 'cindersteel',
     regen: true,
     ft: 1,
-    hotbar: [['cinder_sword', 1], ['cinder_axe', 1], ['pearl', 8], ['gapple', 12], ['splash_heal', 6], ['potion_speed', 2], ['charm', 1]],
+    hotbar: [['cinder_sword', 1], ['cinder_axe', 1], ['pearl', 8], ['gapple', 12], ['splash_heal', 6], ['potion_speed', 2], ['charm', 1], ['flame_bow', 8], ['water_bucket', 1]],
     offhand: ['shield', 1],
     bag: [['pearl', 8], ['gapple', 8], ['splash_heal', 6], ['charm', 1]],
   },

@@ -3,10 +3,11 @@ import { useEffect, useMemo } from 'react'
 import {
   AdditiveBlending,
   BackSide,
-  DoubleSide,
   BoxGeometry,
+  BufferGeometry,
   CanvasTexture,
   Color,
+  DoubleSide,
   EdgesGeometry,
   Float32BufferAttribute,
   Group,
@@ -17,6 +18,8 @@ import {
   MeshBasicMaterial,
   Object3D,
   PlaneGeometry,
+  Points,
+  PointsMaterial,
   SphereGeometry,
   Sprite,
   SpriteMaterial,
@@ -28,7 +31,9 @@ import { mulberry32 } from '@shared/rng'
 
 import { useGame } from '../store/game'
 import { useQuality } from '../store/quality'
+import { itemMaterial, blockItemMaterial } from './art/items'
 import { makeCrackTexture, makeLiquidTexture } from './art/atlas'
+import { day, updateDay } from './dayNight'
 import { runtime } from './runtime'
 import { SUN } from './sun'
 import { worldState } from './world'
@@ -59,8 +64,8 @@ function skyDome() {
   return geo
 }
 
-/** Paints the dome: three-stop gradient, brighter towards the sun. */
-function paintSky(geo, colors) {
+/** Paints the dome: three-stop gradient, brighter towards the sun (`sunDir`, a unit vector). */
+function paintSky(geo, colors, sunDir = SUN_DIR, glowK = 0.55) {
   zenith.set(colors[0])
   mid.set(colors[1])
   horizon.set(colors[2])
@@ -74,8 +79,8 @@ function paintSky(geo, colors) {
     if (h < 0.25) tmpCol.copy(horizon).lerp(mid, h / 0.25)
     else tmpCol.copy(mid).lerp(zenith, Math.min(1, (h - 0.25) / 0.6))
     if (y < 0) tmpCol.copy(horizon)
-    const toSun = Math.max(0, x * SUN_DIR[0] + y * SUN_DIR[1] + z * SUN_DIR[2])
-    tmpCol.lerp(sunCol, toSun ** 6 * 0.55)
+    const toSun = Math.max(0, x * sunDir[0] + y * sunDir[1] + z * sunDir[2])
+    tmpCol.lerp(sunCol, toSun ** 6 * glowK)
     col.setXYZ(i, tmpCol.r, tmpCol.g, tmpCol.b)
   }
   col.needsUpdate = true
@@ -118,13 +123,15 @@ function cloudGeometry() {
 }
 
 const MAX_CLOUDS = 48
+let skyClock = 1
+let wasActive = false
 
 export function Sky() {
   const zone = useGame((s) => s.zone)
   const map = useGame((s) => (s.phase.kind === 'lobby' || s.phase.phase === 'vote' ? 'lobby' : s.phase.map))
   const clouds = useQuality((s) => s.settings.cloudCount)
   const scene = useThree((s) => s.scene)
-  const { dome, sun, cloudMesh, group } = useMemo(() => {
+  const { dome, sun, cloudMesh, stars, group } = useMemo(() => {
     const g = new Group()
     const d = new Mesh(skyDome(), new MeshBasicMaterial({ vertexColors: true, side: BackSide, fog: false, depthWrite: false }))
     d.renderOrder = -10
@@ -134,8 +141,22 @@ export function Sky() {
     const c = new InstancedMesh(cloudGeometry(), new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.86, depthWrite: false, fog: false }), MAX_CLOUDS)
     c.frustumCulled = false
     c.renderOrder = -8
-    g.add(d, sn, c)
-    return { dome: d, sun: sn, cloudMesh: c, group: g }
+    // Stars for Spirelands' nights: one draw, faded in as it gets dark.
+    const starPos = []
+    const rng = mulberry32(11)
+    for (let i = 0; i < 420; i += 1) {
+      const a = rng() * Math.PI * 2
+      const h = 0.12 + rng() * 0.88
+      const r = Math.sqrt(1 - h * h)
+      starPos.push(Math.cos(a) * r * 380, h * 380, Math.sin(a) * r * 380)
+    }
+    const starGeo = new BufferGeometry()
+    starGeo.setAttribute('position', new Float32BufferAttribute(starPos, 3))
+    const st = new Points(starGeo, new PointsMaterial({ color: '#ffffff', size: 2.2, sizeAttenuation: false, transparent: true, opacity: 0, depthWrite: false, fog: false }))
+    st.renderOrder = -9
+    st.visible = false
+    g.add(d, st, sn, c)
+    return { dome: d, sun: sn, cloudMesh: c, stars: st, group: g }
   }, [])
 
   // Colours per map; the fog takes the horizon colour so far islands melt into the sky.
@@ -170,8 +191,40 @@ export function Sky() {
 
   useFrame(({ camera }, dt) => {
     dome.position.copy(camera.position)
-    sun.position.set(camera.position.x + SUN_DIR[0] * 360, camera.position.y + SUN_DIR[1] * 360, camera.position.z + SUN_DIR[2] * 360)
+    stars.position.copy(camera.position)
     cloudMesh.position.x = ((cloudMesh.position.x + dt * 0.8 + 120) % 240) - 120
+    // Spirelands' day and night (elsewhere: always day).
+    const active = worldState.arena === 'ffa' && worldState.kind === 'match'
+    updateDay(active)
+    const o = active ? day.orb : null
+    const dir = o ? [o.x, o.y, o.z] : SUN_DIR
+    sun.position.set(camera.position.x + dir[0] * 360, camera.position.y + dir[1] * 360, camera.position.z + dir[2] * 360)
+    // The moon: smaller and pale blue; the sun warm.
+    sun.material.color.set(day.moon ? '#cfe0ff' : '#ffffff')
+    sun.scale.setScalar(day.moon ? 70 : 150)
+    stars.visible = active && day.night > 0.05
+    stars.material.opacity = Math.min(1, day.night * 1.2)
+    const shade = day.light
+    cloudMesh.material.color.copy(day.tint).multiplyScalar(shade)
+    // Figures and held items are unlit: they dim with the sky.
+    const lit = active ? day.light : 1
+    itemMaterial.color.copy(day.tint).multiplyScalar(lit)
+    blockItemMaterial.color.copy(day.tint).multiplyScalar(lit)
+    // Repaint the dome (and fog) a few times a second while the day turns.
+    skyClock += dt
+    if (active && skyClock > 0.5) {
+      skyClock = 0
+      paintSky(dome.geometry, day.sky, dir, day.moon ? 0.12 : 0.55)
+      if (scene.fog) scene.fog.color.copy(day.sky[2])
+      if (scene.background?.isColor) scene.background.copy(day.sky[2])
+      wasActive = true
+    } else if (!active && wasActive) {
+      wasActive = false
+      const colors = SKIES[zone === 'lobby' ? 'lobby' : map] || SKIES.lobby
+      paintSky(dome.geometry, colors)
+      if (scene.fog) scene.fog.color.set(colors[2])
+      scene.background = new Color(colors[2])
+    }
   })
 
   useEffect(
@@ -182,8 +235,10 @@ export function Sky() {
       sun.material.dispose()
       cloudMesh.geometry.dispose()
       cloudMesh.material.dispose()
+      stars.geometry.dispose()
+      stars.material.dispose()
     },
-    [dome, sun, cloudMesh],
+    [dome, sun, cloudMesh, stars],
   )
 
   return <primitive object={group} />
@@ -232,6 +287,7 @@ export function Liquid() {
       o.x = (o.x + dt * sx) % 1
       o.y = (o.y + dt * sz) % 1
     }
+    water.material.color.copy(day.tint).multiplyScalar(atSea && day.active ? day.light : 1)
     scroll(water, 0.01, 0.004)
     if (waterGlint.visible) scroll(waterGlint, -0.008, 0.011)
   })

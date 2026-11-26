@@ -3,7 +3,9 @@
  * N fake players who vote, wander and report positions like real clients, and reports the
  * server's CPU and memory and how evenly snapshots arrive.
  *
- *   node scripts/loadtest.mjs [players=32] [seconds=60]
+ *   node scripts/loadtest.mjs [players=32] [seconds=60] [mix|ffa]
+ *
+ * `ffa`: everyone in Spirelands at once (the heaviest case: one world, everyone visible).
  *
  * Fake players stand still-ish (small steps around where they were put), so the movement
  * checks should never correct them: any `tp` beyond the game's own teleports is counted.
@@ -18,6 +20,7 @@ import { Client } from '@colyseus/sdk'
 
 const PLAYERS = Number(process.argv[2] || 32)
 const SECONDS = Number(process.argv[3] || 60)
+const ALL_FFA = process.argv[4] === 'ffa'
 const PORT = 2599
 const dir = mkdtempSync(join(tmpdir(), 'strafex-load-'))
 
@@ -82,7 +85,7 @@ async function connect(i) {
       // Every third player lives in Spirelands; the rest queue for sword duels (paired
       // with each other, or a bot), vote, and play again when a duel ends.
       if (payload.kind === 'lobby' && !payload.queue) {
-        if (i % 3 === 0) room.send('ffa')
+        if (ALL_FFA || i % 3 === 0) room.send('ffa')
         else room.send('queue', { mode: 'sword' })
       } else if (payload.kind === 'ffa' && payload.needKit) room.send('kit', { mode: 'sword' })
       else if (payload.kind === 'duel' && payload.phase === 'vote' && !payload.myMapVote) room.send('voteMap', { map: 'meadow' })

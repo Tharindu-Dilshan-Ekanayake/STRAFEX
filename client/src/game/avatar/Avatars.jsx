@@ -4,6 +4,8 @@ import { Mesh, Vector3 } from 'three'
 
 import { LOBBY_SWORD, OFFHAND } from '@shared/balance'
 
+import { bodyTurn } from './bodyTurn'
+
 import { useBloxity } from '../../bloxity/BloxityContext'
 import ErrorBoundary from '../../ui/ErrorBoundary'
 import { getGame } from '../../store/game'
@@ -24,6 +26,25 @@ import { avatarShown } from './state'
  */
 
 const REFRESH_MS = 250
+
+/**
+ * A shield in a hand (`side` 1 = left, -1 = right). The hand's frame turns with the arm,
+ * so: hanging at rest, the shield stands upright beside the forearm, its face forward
+ * and a little out; raised to block (the arm level, pointing ahead), it lies across the
+ * arm - which turns its face straight at whoever is in front.
+ */
+function placeShield(mesh, raised, side) {
+  if (raised) {
+    mesh.position.set(0.02 * side, -0.14, 0.04)
+    mesh.rotation.set(Math.PI / 2, 0, 0)
+  } else {
+    // The idle pose holds the forearm out (about a radian): tipped back by that much, the
+    // shield stands upright.
+    mesh.position.set(0.05 * side, -0.12, 0.08)
+    mesh.rotation.set(0.9, 0.3 * side, 0)
+  }
+}
+let shieldModel = null
 
 export default function Avatars() {
   const [slots, setSlots] = useState([])
@@ -47,8 +68,16 @@ export default function Avatars() {
       ranked.forEach(({ r }, i) => {
         if (members.has(r.eid) && i < keepRank && next.size < slotsFree) next.add(r.eid)
       })
+      // Building an avatar is the expensive part: at most one new one per refresh, so
+      // walking into a crowd never builds several in the same frame (a hitch).
+      let added = 0
       for (const { r } of ranked) {
         if (next.size >= slotsFree) break
+        if (next.has(r.eid)) continue
+        if (!members.has(r.eid)) {
+          if (added >= 1) continue
+          added += 1
+        }
         next.add(r.eid)
       }
       members = next
@@ -99,7 +128,8 @@ function AvatarSlot({ id, equipped, proportions, local = false }) {
   const outer = useRef(null)
   const hand = useRef(null)
   const back = useRef(null)
-  const motion = useRef({ walkPhase: 0, speed: 0, anim: 0, swing: 0, holding: false, pitch: 0, time: 0 })
+  const motion = useRef({ walkPhase: 0, speed: 0, anim: 0, swing: 0, holding: false, pitch: 0, time: 0, headTurn: 0 })
+  const turn = useRef({})
   /** Whether the body is posed this frame (see the frame loop). */
   const active = useRef(true)
   const frame = useRef(0)
@@ -182,9 +212,12 @@ function AvatarSlot({ id, equipped, proportions, local = false }) {
     g.matrixWorldAutoUpdate = active.current
     if (!active.current) return
     g.position.set(src.x, src.y, src.z)
-    // The rig faces +Z; the game's characters face -Z at yaw 0.
-    g.rotation.y = src.yaw + Math.PI
+    // The rig faces +Z; the game's characters face -Z at yaw 0. Walking, the whole figure
+    // turns to face the way it's going.
+    const turnOff = bodyTurn(turn.current, src.x, src.z, src.yaw, now)
+    g.rotation.y = src.yaw + turnOff + Math.PI
     const m = motion.current
+    m.headTurn = 0
     m.walkPhase = src.walkPhase
     m.speed = src.speed
     m.anim = src.anim
@@ -197,17 +230,20 @@ function AvatarSlot({ id, equipped, proportions, local = false }) {
     m.offHolding = off !== 'fist'
 
     // The held item, handle in the palm, blade pointing ahead.
+    shieldModel ||= itemModel('shield')
     const model = itemModel(src.anim === 5 && off !== 'shield' ? 'shield' : held, sword)
     if (model) {
       if (itemMesh.geometry !== model.geometry) {
         itemMesh.geometry = model.geometry
         itemMesh.material = model.material
       }
-      const size = model.block ? 0.32 : 0.9
+      const size = model.block ? 0.32 : model === shieldModel ? 0.72 : 0.9
       itemMesh.scale.setScalar(size)
       if (model.block) {
         itemMesh.position.set(0, -0.08, 0.1)
         itemMesh.rotation.set(0, 0.6, 0)
+      } else if (model === shieldModel) {
+        placeShield(itemMesh, src.anim === 5, -1)
       } else {
         // Sprites are drawn blade up-right: turned so that, with the arm hanging, the
         // blade points ahead and down (it comes level as the arm lifts), handle in hand.
@@ -232,8 +268,7 @@ function AvatarSlot({ id, equipped, proportions, local = false }) {
         offMesh.position.set(0, -0.08, 0.1)
         offMesh.rotation.set(0, -0.6, 0)
       } else if (off === 'shield') {
-        offMesh.position.set(0.06, -0.2, 0.08)
-        offMesh.rotation.set(0, Math.PI, 0)
+        placeShield(offMesh, src.anim === 5, 1)
       } else {
         offMesh.position.set(0, -0.33 * size, 0.33 * size)
         offMesh.rotation.set(0, -Math.PI / 2, -Math.PI / 2)

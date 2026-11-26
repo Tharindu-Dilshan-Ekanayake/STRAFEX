@@ -66,18 +66,19 @@ canvas {
     inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, 0.08);
 }
 
-/* Buttons: rounded, glossy, with a 3D lip they press down into. --c is the colour. */
+/* Buttons: blocky like Minecraft's - square-cornered, black-outlined, lit along the top
+   left and shaded along the bottom right, with a lip they press down into. --c is the colour. */
 .mc-btn {
   --c: #4a8f2c;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.32) 0%, rgba(255, 255, 255, 0.1) 46%, rgba(0, 0, 0, 0.06) 54%, rgba(0, 0, 0, 0.16) 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.06) 50%, rgba(0, 0, 0, 0.1) 100%),
     var(--c);
-  border: calc(var(--u) * 3) solid rgba(16, 10, 34, 0.7);
-  border-radius: calc(var(--u) * 14);
+  border: calc(var(--u) * 3) solid #000;
+  border-radius: calc(var(--u) * 4);
   box-shadow:
-    0 calc(var(--u) * 5) 0 rgba(16, 10, 34, 0.55),
-    0 calc(var(--u) * 8) calc(var(--u) * 14) rgba(0, 0, 0, 0.25),
-    inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, 0.45);
+    0 calc(var(--u) * 4) 0 rgba(0, 0, 0, 0.55),
+    inset calc(var(--u) * 3) calc(var(--u) * 3) 0 rgba(255, 255, 255, 0.35),
+    inset calc(var(--u) * -3) calc(var(--u) * -3) 0 rgba(0, 0, 0, 0.28);
   color: #fff;
   font-weight: 700;
   cursor: pointer;
@@ -270,6 +271,239 @@ canvas {
   animation: bob 1.4s ease-in-out infinite;
 }
 
+/* --- Minecraft-style UI ------------------------------------------------------------------
+   .mc-gui: the light-grey inventory panel (white top-left edge, dark bottom-right, black
+   outline); .mc-tile / .mc-slot: recessed grey slots; .mc-stone: the stone button that turns
+   blue under the mouse; .mc-hud: the translucent black of the scoreboard and chat; .mc-text:
+   pixel lettering, white with a hard shadow. */
+.mc-gui {
+  background: #c6c6c6;
+  border: calc(var(--u) * 3) solid #000;
+  border-radius: calc(var(--u) * 4);
+  box-shadow:
+    inset calc(var(--u) * 4) calc(var(--u) * 4) 0 #ffffff,
+    inset calc(var(--u) * -4) calc(var(--u) * -4) 0 #555555,
+    0 calc(var(--u) * 12) calc(var(--u) * 30) rgba(0, 0, 0, 0.45);
+  color: #3f3f3f;
+}
+.mc-title {
+  font-family: 'Silkscreen', system-ui, sans-serif;
+  font-weight: 700;
+  color: #3f3f3f;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+.mc-note {
+  color: #4a4a4a;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.mc-text {
+  font-family: 'Silkscreen', system-ui, sans-serif;
+  font-weight: 700;
+  color: #ffffff;
+  text-shadow: 0.12em 0.12em 0 #3f3f3f;
+  line-height: 1.1;
+}
+.mc-slot {
+  background: #8b8b8b;
+  box-shadow:
+    inset calc(var(--u) * 2) calc(var(--u) * 2) 0 #373737,
+    inset calc(var(--u) * -2) calc(var(--u) * -2) 0 #ffffff;
+}
+.mc-tile {
+  background: #8b8b8b;
+  border: 0;
+  border-radius: 0;
+  color: #fff;
+  cursor: pointer;
+  box-shadow:
+    inset calc(var(--u) * 3) calc(var(--u) * 3) 0 #373737,
+    inset calc(var(--u) * -3) calc(var(--u) * -3) 0 #ffffff;
+  transition: background 0.1s, transform 0.08s;
+}
+.mc-tile:hover {
+  background: #a3a3a3;
+  outline: calc(var(--u) * 3) solid #ffffff;
+  outline-offset: calc(var(--u) * -1);
+}
+.mc-tile:active {
+  transform: translateY(calc(var(--u) * 1));
+}
+.mc-tile .mode-art {
+  border-radius: 0;
+  box-shadow: 0 0 0 calc(var(--u) * 2) #373737;
+}
+.mc-stone {
+  font-family: 'Silkscreen', system-ui, sans-serif;
+  font-weight: 700;
+  color: #ffffff;
+  text-shadow: 0.12em 0.12em 0 #3f3f3f;
+  background: linear-gradient(180deg, #8e8e8e 0%, #7b7b7b 50%, #6c6c6c 100%);
+  border: calc(var(--u) * 3) solid #000;
+  border-radius: calc(var(--u) * 3);
+  box-shadow:
+    inset calc(var(--u) * 3) calc(var(--u) * 3) 0 #b8b8b8,
+    inset calc(var(--u) * -3) calc(var(--u) * -4) 0 #484848;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.08s;
+}
+.mc-stone:hover {
+  background: linear-gradient(180deg, #9ba7de 0%, #7f8bc4 50%, #6e79b0 100%);
+  box-shadow:
+    inset calc(var(--u) * 3) calc(var(--u) * 3) 0 #c9d1f8,
+    inset calc(var(--u) * -3) calc(var(--u) * -4) 0 #4a5590;
+}
+.mc-stone:active {
+  transform: translateY(calc(var(--u) * 2));
+}
+.mc-stone svg {
+  filter: drop-shadow(calc(var(--u) * 2) calc(var(--u) * 2) 0 rgba(0, 0, 0, 0.35));
+}
+.mc-hud {
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: calc(var(--u) * 2);
+  color: #fff;
+}
+.mc-hud-title {
+  background: rgba(0, 0, 0, 0.35);
+  text-align: center;
+}
+.mc-level {
+  font-family: 'Silkscreen', system-ui, sans-serif;
+  font-weight: 700;
+  color: #80ff20;
+  line-height: 1;
+  text-shadow:
+    calc(var(--u) * 2) 0 0 #000,
+    calc(var(--u) * -2) 0 0 #000,
+    0 calc(var(--u) * 2) 0 #000,
+    0 calc(var(--u) * -2) 0 #000;
+}
+.mc-xp {
+  background: #1d1d1d;
+  border: calc(var(--u) * 2) solid #000;
+  overflow: hidden;
+}
+.mc-xp-fill {
+  height: 100%;
+  background:
+    repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - var(--u) * 2), rgba(0, 0, 0, 0.45) calc(10% - var(--u) * 2), rgba(0, 0, 0, 0.45) 10%),
+    linear-gradient(180deg, #b4ff6a 0%, #80ff20 50%, #4fbf0a 100%);
+}
+
+/* Every popup is a Minecraft panel: its slots recessed grey, plain text dark grey. */
+.mc-gui .slot {
+  background: #8b8b8b;
+  border: 0;
+  border-radius: 0;
+  box-shadow:
+    inset calc(var(--u) * 2) calc(var(--u) * 2) 0 #373737,
+    inset calc(var(--u) * -2) calc(var(--u) * -2) 0 #ffffff;
+}
+.mc-gui .slot.sel {
+  outline: calc(var(--u) * 3) solid #ffffff;
+}
+.mc-gui .chip {
+  background: #555555;
+  border-color: #000;
+  border-radius: calc(var(--u) * 3);
+}
+/* Titles in pixel lettering. */
+.fancy {
+  font-family: 'Silkscreen', system-ui, sans-serif !important;
+  letter-spacing: 0.04em;
+}
+
+/* Spirelands' kit picker: a small Minecraft panel, the picture and kit on each slot. */
+.kit-picker {
+  width: min(94vw, calc(var(--u) * 660));
+  max-height: 94vh;
+}
+.kit-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: calc(var(--u) * 6);
+}
+.mode-card.compact {
+  gap: calc(var(--u) * 5);
+  padding: calc(var(--u) * 6);
+}
+@media (max-height: 520px) {
+  .kit-note {
+    display: none;
+  }
+  .kit-picker {
+    padding: calc(var(--u) * 10) !important;
+  }
+}
+@media (orientation: portrait) {
+  .kit-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* The lobby's play buttons: square-cornered and blocky, with Minecraft-style lettering
+   (a pixel font, white with a hard dark shadow down and to the right). */
+.play-btn.mc-btn {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 10);
+  padding: calc(var(--u) * 8) calc(var(--u) * 20) calc(var(--u) * 8) calc(var(--u) * 12);
+  border-radius: calc(var(--u) * 4);
+  border-width: calc(var(--u) * 4);
+  border-color: #1b1430;
+  box-shadow:
+    0 calc(var(--u) * 6) 0 rgba(16, 10, 34, 0.7),
+    0 calc(var(--u) * 10) calc(var(--u) * 16) rgba(0, 0, 0, 0.3),
+    inset calc(var(--u) * 3) calc(var(--u) * 3) 0 rgba(255, 255, 255, 0.35),
+    inset calc(var(--u) * -3) calc(var(--u) * -4) 0 rgba(0, 0, 0, 0.25);
+  font-family: 'Silkscreen', system-ui, sans-serif;
+  text-shadow: none;
+}
+.play-title,
+.play-sub {
+  font-family: 'Silkscreen', system-ui, sans-serif;
+  font-weight: 700;
+  line-height: 1;
+  color: #ffffff;
+  text-shadow: 0.12em 0.12em 0 rgba(40, 28, 10, 0.75);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.play-title {
+  font-size: calc(var(--u) * 24);
+}
+.play-sub {
+  margin-top: calc(var(--u) * 4);
+  font-size: calc(var(--u) * 12);
+  color: #fff3c2;
+}
+.play-icon {
+  flex: none;
+  filter: drop-shadow(calc(var(--u) * 2) calc(var(--u) * 2) 0 rgba(16, 10, 34, 0.55));
+}
+.play-btn:hover .play-icon {
+  animation: icon-wiggle 0.4s ease-in-out;
+}
+@keyframes icon-wiggle {
+  25% {
+    transform: rotate(-8deg) scale(1.08);
+  }
+  75% {
+    transform: rotate(8deg) scale(1.08);
+  }
+}
+@media (orientation: portrait), (max-width: 760px) {
+  .play-title {
+    font-size: calc(var(--u) * 18);
+  }
+  .play-btn.mc-btn {
+    padding: calc(var(--u) * 6) calc(var(--u) * 12) calc(var(--u) * 6) calc(var(--u) * 8);
+  }
+}
+
 /*
  * The lobby menu: square tiles (icon over label), two to a row, on the left - narrow
  * enough to stay clear of the vote panel in the middle on any screen.
@@ -291,11 +525,42 @@ canvas {
   width: calc(var(--u) * 34) !important;
   height: calc(var(--u) * 34) !important;
 }
-.menu-label {
-  font-size: calc(var(--u) * 13);
+.menu-label,
+.menu-label-short {
+  font-family: 'Silkscreen', system-ui, sans-serif;
+  font-weight: 700;
+  color: #ffffff;
+  text-shadow: 0.12em 0.12em 0 #3f3f3f;
+  font-size: calc(var(--u) * 12);
   line-height: 1;
   white-space: nowrap;
   letter-spacing: 0.02em;
+}
+/* The queue bar's Spirelands button glows after a while waiting: there's a game in there. */
+.mc-stone.nudge {
+  animation: nudge-glow 1.2s ease-in-out infinite;
+}
+@keyframes nudge-glow {
+  50% {
+    box-shadow:
+      inset calc(var(--u) * 3) calc(var(--u) * 3) 0 #b8b8b8,
+      inset calc(var(--u) * -3) calc(var(--u) * -4) 0 #484848,
+      0 0 calc(var(--u) * 14) #7cff9e;
+    filter: brightness(1.15);
+  }
+}
+/* "Press Esc to unlock the mouse": the first seconds of play, then never again. */
+.esc-hint {
+  animation: esc-fade 0.4s ease-out both;
+}
+@keyframes esc-fade {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(var(--u) * -6));
+  }
+}
+.menu-btn.mc-stone {
+  border-radius: calc(var(--u) * 3);
 }
 @media (max-height: 520px) {
   .lobby-menu {
@@ -433,13 +698,15 @@ canvas {
 }
 
 /* Touch buttons: round, glassy, pressed in when held. */
+/* Touch buttons, Minecraft-style: square and see-through with a black edge, lit along the top
+   left and shaded along the bottom right; pixel lettering. */
 .tbtn {
-  border-radius: 50%;
-  border: calc(var(--u) * 4) solid rgba(13, 10, 24, 0.85);
+  border-radius: calc(var(--u) * 6);
+  border: calc(var(--u) * 4) solid rgba(0, 0, 0, 0.8);
   box-shadow:
-    inset 0 calc(var(--u) * 6) 0 rgba(255, 255, 255, 0.28),
-    inset 0 calc(var(--u) * -7) 0 rgba(0, 0, 0, 0.28),
-    0 calc(var(--u) * 5) 0 rgba(0, 0, 0, 0.35);
+    inset calc(var(--u) * 4) calc(var(--u) * 4) 0 rgba(255, 255, 255, 0.3),
+    inset calc(var(--u) * -4) calc(var(--u) * -5) 0 rgba(0, 0, 0, 0.3),
+    0 calc(var(--u) * 4) 0 rgba(0, 0, 0, 0.35);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -452,8 +719,32 @@ canvas {
 }
 .tbtn:active,
 .tbtn.held {
-  transform: scale(0.92) translateY(2px);
-  filter: brightness(1.15);
+  transform: scale(0.94) translateY(2px);
+  filter: brightness(1.2);
+  box-shadow:
+    inset calc(var(--u) * -3) calc(var(--u) * -3) 0 rgba(255, 255, 255, 0.25),
+    inset calc(var(--u) * 4) calc(var(--u) * 4) 0 rgba(0, 0, 0, 0.35);
+}
+.tbtn-label {
+  font-family: 'Silkscreen', system-ui, sans-serif;
+  font-weight: 700;
+  line-height: 1;
+  color: #ffffff;
+  letter-spacing: 0.04em;
+  text-shadow: 0.14em 0.14em 0 #3f3f3f;
+}
+/* The move stick: a square see-through pad and a stone knob. */
+.stick-ring {
+  border-radius: 10px;
+  border: 3px solid rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: inset 3px 3px 0 rgba(255, 255, 255, 0.25), inset -3px -3px 0 rgba(0, 0, 0, 0.25);
+}
+.stick-knob {
+  border-radius: 6px;
+  border: 3px solid #000;
+  background: linear-gradient(180deg, #a9a9a9 0%, #8a8a8a 50%, #737373 100%);
+  box-shadow: inset 3px 3px 0 #d0d0d0, inset -3px -4px 0 #4f4f4f, 0 4px 0 rgba(0, 0, 0, 0.35);
 }
 
 /* --- Motion ---------------------------------------------------------------------------------
@@ -864,10 +1155,9 @@ img.heart-low {
  */
 @media (orientation: portrait) {
   .top-right {
-    flex-direction: row-reverse;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    justify-content: flex-start;
+    /* Portrait: Lobby, chat and settings in a row under the name tag (not beside it). */
+    flex-direction: column;
+    align-items: flex-end;
     max-width: calc(100vw - var(--u) * 28);
   }
   .top-right > .tr-feed {
@@ -885,7 +1175,8 @@ img.heart-low {
     text-align: center;
   }
   .top-center {
-    top: calc(var(--u) * 110) !important;
+    /* Below the name tag and its button row. */
+    top: calc(var(--u) * 150) !important;
     max-width: calc(100vw - var(--u) * 16);
   }
   .vote-panel {
@@ -963,18 +1254,62 @@ img.heart-low {
  * size comes from the screen width, so the bar keeps a margin on both sides and never runs
  * under the touch buttons.
  */
+/* The hotbar, Minecraft's: square slots joined in a strip, a grey frame round dark see-through
+   glass; the slot in hand gets a thick white frame edged in black, a little bigger than the rest.
+   The offhand sits apart on the left, the inventory button on the right. */
 .hotbar {
-  padding: calc(var(--u) * 5);
-  background: rgba(13, 10, 24, 0.42);
-  border: calc(var(--u) * 2) solid rgba(255, 255, 255, 0.1);
-  border-radius: calc(var(--u) * 16);
-  box-shadow: 0 calc(var(--u) * 6) calc(var(--u) * 16) rgba(0, 0, 0, 0.25);
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  filter: drop-shadow(0 calc(var(--u) * 3) 0 rgba(0, 0, 0, 0.35));
 }
+.hotbar .slot {
+  position: relative;
+  background: rgba(0, 0, 0, 0.42);
+  border: calc(var(--u) * 4) solid #8b8b8b;
+  border-radius: 0;
+  box-shadow:
+    inset calc(var(--u) * 2) calc(var(--u) * 2) 0 rgba(0, 0, 0, 0.45),
+    inset calc(var(--u) * -2) calc(var(--u) * -2) 0 rgba(255, 255, 255, 0.12);
+}
+.hotbar .slot + .slot {
+  margin-left: calc(var(--u) * -4);
+}
+.hotbar .slot.sel {
+  z-index: 1;
+  transform: none;
+  animation: none;
+  border-color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+  outline: calc(var(--u) * 3) solid #000;
+  box-shadow:
+    0 0 0 calc(var(--u) * 6) #c6c6c6,
+    0 0 0 calc(var(--u) * 9) #000;
+}
+.slot-count {
+  right: calc(var(--u) * 2);
+  bottom: calc(var(--u) * 0);
+  font-family: 'Silkscreen', system-ui, sans-serif;
+  font-weight: 700;
+  line-height: 1;
+  color: #ffffff;
+  text-shadow: 0.14em 0.14em 0 #3f3f3f;
+}
+.slot-num {
+  left: calc(var(--u) * 3);
+  top: calc(var(--u) * 2);
+  font-family: 'Silkscreen', system-ui, sans-serif;
+  font-weight: 700;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.55);
+  text-shadow: 0.14em 0.14em 0 rgba(0, 0, 0, 0.6);
+}
+/* Hearts float above the hotbar on nothing, as in Minecraft. */
 .hearts-row > :first-child {
   width: auto !important;
-  padding: calc(var(--u) * 3) calc(var(--u) * 10);
-  background: rgba(13, 10, 24, 0.42);
-  border-radius: 999px;
+  padding: 0 calc(var(--u) * 2);
+  background: none;
 }
 @media (orientation: portrait) {
   .touch-ui {
@@ -1114,7 +1449,9 @@ img.heart-low {
 }
 .touch-ui .stats-panel {
   transform: scale(0.8);
-  transform-origin: right center;
+  transform-origin: right top;
+  /* Above the touch buttons on the right. */
+  top: 30% !important;
 }
 @media (orientation: portrait) {
   .touch-ui .stats-panel {
@@ -1151,6 +1488,54 @@ img.heart-low {
 }
 .mode-card.picked {
   outline: calc(var(--u) * 3) solid #ffd23b;
+}
+/* The kit's picture across the top of its card, the name over its bottom edge. */
+.mode-art {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 2.6 / 1;
+  border-radius: calc(var(--u) * 8);
+  overflow: hidden;
+  background: #241d38;
+  box-shadow: inset 0 0 0 calc(var(--u) * 2) color-mix(in srgb, var(--kc) 55%, transparent);
+}
+.mode-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.25s ease;
+}
+.mode-art::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 45%, color-mix(in srgb, var(--kc) 22%, rgba(10, 6, 24, 0.85)) 100%);
+  pointer-events: none;
+}
+.mode-art-name {
+  position: absolute;
+  left: calc(var(--u) * 7);
+  bottom: calc(var(--u) * 5);
+  z-index: 1;
+}
+.mode-card:hover .mode-art img {
+  transform: scale(1.06);
+}
+.craft-row {
+  width: 100%;
+}
+.craft-row.off {
+  opacity: 0.6;
+}
+/* Narrow screens: crafting goes under the inventory. */
+@media (orientation: portrait), (max-width: 760px) {
+  .mc-panel:has(> .craft-col) {
+    flex-direction: column;
+  }
+  .craft-col {
+    width: 100% !important;
+  }
 }
 @media (orientation: portrait) {
   .mode-grid {
@@ -1200,4 +1585,26 @@ img.heart-low {
 }
 #water-overlay.on {
   opacity: 1;
+}
+/* On fire: the screen's edges flicker orange (Effects.jsx toggles .on). */
+#burn-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+  opacity: 0;
+  background: radial-gradient(ellipse at 50% 40%, transparent 50%, rgba(255, 120, 20, 0.35) 80%, rgba(255, 70, 0, 0.7) 100%);
+  transition: opacity 0.25s;
+}
+#burn-vignette.on {
+  opacity: 1;
+  animation: burn-flicker 0.35s steps(2) infinite alternate;
+}
+@keyframes burn-flicker {
+  from {
+    filter: brightness(1);
+  }
+  to {
+    filter: brightness(1.35);
+  }
 }

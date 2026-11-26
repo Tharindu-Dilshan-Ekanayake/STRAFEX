@@ -26,7 +26,7 @@ export const useGame = create((set, get) => ({
   profileLoaded: false,
   playable: false,
 
-  net: { mode: 'connecting', lobbyId: null, code: null, isPrivate: false, players: 1, maxPlayers: 50, message: null, ping: 0 },
+  net: { mode: 'connecting', lobbyId: null, code: null, isPrivate: false, players: 1, maxPlayers: 30, message: null, ping: 0 },
   leaderboards: null,
 
   /**

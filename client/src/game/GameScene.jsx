@@ -8,6 +8,7 @@ import { useBloxityStore } from '../bloxity/store'
 import { useGame } from '../store/game'
 import { RENDER_SCALES, useQuality } from '../store/quality'
 import ErrorBoundary from '../ui/ErrorBoundary'
+import { day } from './dayNight'
 import { warmItemModels } from './art/items'
 import Characters from './Characters'
 import { BlockOutline, Liquid, Motes, Sky } from './Environment'
@@ -63,6 +64,26 @@ function ViewDistance({ far }) {
  * The 3D view: renderer lifecycle, quality-driven settings, automatic preset drops when
  * FPS falls under budget, and recovery from a lost WebGL context.
  */
+/** Light for the avatars only (the blocks' shading is baked into the terrain): dims at night. */
+function DayLights() {
+  const hemi = useRef(null)
+  const sun = useRef(null)
+  useFrame(() => {
+    const k = day.active ? day.light : 1
+    if (hemi.current) hemi.current.intensity = 2.2 * k
+    if (sun.current) {
+      sun.current.intensity = 1.9 * k * (day.moon ? 0.4 : 1)
+      sun.current.color.copy(day.tint)
+    }
+  })
+  return (
+    <>
+      <hemisphereLight ref={hemi} args={['#eaf4ff', '#9a8466', 2.2]} />
+      <directionalLight ref={sun} position={[42, 60, -82]} intensity={1.9} color="#fff1d6" />
+    </>
+  )
+}
+
 export function GameScene({ onReady }) {
   const { game } = useBloxity()
   const settings = useQuality((s) => s.settings)
@@ -164,8 +185,7 @@ export function GameScene({ onReady }) {
 
         <Player />
         {/* Light for the avatars only: the blocks' shading is baked into the terrain. */}
-        <hemisphereLight args={['#eaf4ff', '#9a8466', 2.2]} />
-        <directionalLight position={[42, 60, -82]} intensity={1.9} color="#fff1d6" />
+        <DayLights />
         <Sky />
         <Terrain />
         <Liquid />

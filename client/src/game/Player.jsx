@@ -4,7 +4,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { Vector3 } from 'three'
 import { breakSeconds, COMBAT, EFFECTS, ITEMS, MELEE_KINDS, OFFHAND } from '@shared/balance'
 import { PLAYER, stepBody } from '@shared/physics'
-import { B, BLOCKS, blockKey, rayBox } from '@shared/voxel'
+import { B, BLOCKS, blockKey, isWater, rayBox } from '@shared/voxel'
 
 import { materialOf, sfx } from '../audio/sfx'
 import { send } from '../net/actions'
@@ -16,7 +16,7 @@ import { installInput, sprintSpent, wantsSprint } from './input'
 import { pushFx, recordClick, runtime } from './runtime'
 import { canBreak, lobbyLayout, setBlock, worldState } from './world'
 import { BOW_FULL_MS, placeCamera } from './player/camera'
-import { aim, findPlacement, heldId, rightClickTarget } from './player/aim'
+import { aim, findPlacement, findWater, heldId, rightClickTarget } from './player/aim'
 
 /**
  * You: movement against the voxel world (the same physics as the bots on the server),
@@ -49,6 +49,13 @@ function canAct() {
 /** A duel between rounds or counting down: everyone stays on their spawn. */
 function heldStill(game) {
   return runtime.zone === 'match' && game.phase.kind === 'duel' && game.phase.phase !== 'fight'
+}
+
+/** Opens the loot chest you aim at (the host decides what's inside). */
+function openChest(now) {
+  const t = runtime.target
+  runtime.swingAt = now
+  send('loot', { x: t.x, y: t.y, z: t.z })
 }
 
 /** A shield in a hand: the left hand, or the slot you hold. */
@@ -117,7 +124,7 @@ export default function Player() {
         { moveX: mx, moveZ: mz, jump: !stop && input.jump, sneak, sprint, guard, autoJump: input.touch },
         dt,
         (effect('speed') ? EFFECTS.speed.speedMul : 1) * (slowed ? 0.45 : 1),
-        effect('jump') ? EFFECTS.jump.jumpMul : 1,
+        effect('leap') ? EFFECTS.leap.jumpMul : effect('jump') ? EFFECTS.jump.jumpMul : 1,
       )
       if (b.inWater && !wasWet && fallSpeed < -3) {
         sfx.splash(Math.min(1, -fallSpeed / 14))
@@ -191,7 +198,7 @@ export default function Player() {
 
     placeCamera(camera, game, b, eyeY, dt, now)
     // Eyes under water: the blue wash (a DOM class, set only when it changes).
-    const under = world.get(camera.position.x, camera.position.y, camera.position.z) === B.WATER
+    const under = isWater(world.get(camera.position.x, camera.position.y, camera.position.z))
     if (under !== stateBag.under) {
       stateBag.under = under
       document.getElementById('water-overlay')?.classList.toggle('on', under)
@@ -300,6 +307,9 @@ function act(st, world, now, dt, b, dx, dy, dz) {
         // A sprint hit spends your sprint: let go of forward (w-tap) to get it back.
         if (runtime.player.sprinting) sprintSpent(true)
       } else if (attackEdge) runtime.swingAt = now
+    } else if (target.kind === 'block' && target.id === B.LOOT_CHEST) {
+      // Hitting a chest opens it too (one button on a phone).
+      if (attackEdge) openChest(now)
     } else if (target.kind === 'block' && now > st.digCooldownUntil && canBreak(target.x, target.y, target.z)) {
       const def = BLOCKS[target.id]
       const key = blockKey(target.x, target.y, target.z)
@@ -350,8 +360,14 @@ function act(st, world, now, dt, b, dx, dy, dz) {
     return
   }
 
-  // --- Right button: place, eat, drink, throw, shoot, lunge - with the right hand's item
-  // if it does something, else the left hand's - or raise the shield.
+  // --- Right button: a loot chest opens; otherwise place, eat, drink, throw, shoot, lunge -
+  // with the right hand's item if it does something, else the left hand's - or raise the
+  // shield.
+  if (runtime.target.kind === 'block' && runtime.target.id === B.LOOT_CHEST) {
+    if (useEdge) openChest(now)
+    setBlocking(false)
+    return
+  }
   let wantsBlock = false
   const use = rightClickTarget()
   const usedId = use.id
@@ -368,6 +384,31 @@ function act(st, world, now, dt, b, dx, dy, dz) {
       pushFx({ type: 'place', x: pl.x, y: pl.y, z: pl.z, id })
       sfx.place(materialOf(id))
       send('place', { x: pl.x, y: pl.y, z: pl.z, hand })
+    }
+  } else if (usedItem.kind === 'bucket') {
+    // One pour or scoop per click.
+    if (useEdge && now - st.placeAt > 250) {
+      const pl = runtime.place
+      st.placeAt = now
+      if (usedItem.fill && pl.ok) {
+        runtime.swingAt = now
+        setBlock(pl.x, pl.y, pl.z, B.WATER)
+        pushFx({ type: 'douse', x: pl.x + 0.5, y: pl.y + 0.5, z: pl.z + 0.5 })
+        sfx.splash(0.8)
+        send('place', { x: pl.x, y: pl.y, z: pl.z, hand })
+      } else if (usedItem.fill) {
+        // Nowhere to pour: over your own head (out goes the fire).
+        runtime.swingAt = now
+        sfx.splash(0.8)
+        send('use', { hand })
+      } else {
+        const w = findWater(worldState.world, b, dx, dy, dz)
+        if (w) {
+          runtime.swingAt = now
+          sfx.splash(0.5)
+          send('use', { hand, x: w.x, y: w.y, z: w.z })
+        }
+      }
     }
   } else if (usedItem.kind === 'food' || usedItem.kind === 'potion') {
     if (input.use) {

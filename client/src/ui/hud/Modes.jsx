@@ -8,7 +8,7 @@ import { exitPointerLock } from '../../game/input'
 import { actions } from '../../net/actions'
 import { useGame } from '../../store/game'
 import { u, useNow } from '../format'
-import { Button, Fancy } from '../kit'
+import { Fancy } from '../kit'
 import { mapPreview } from '../mapPreview'
 import { t } from '../i18n'
 
@@ -17,39 +17,50 @@ import { t } from '../i18n'
  * picker in Spirelands, and the map vote once an opponent is found.
  */
 
-/** One mode's card: name, what it is, the kit at a glance, and who's searching. */
-function ModeCard({ id, i, picked, note, onPick, sword, duel = true }) {
+/** Each kit's picture: a fight on the Spirelands island (public/kits, ~20KB each, loaded
+ * only when a menu opens). */
+const kitArt = (id) => `${import.meta.env.BASE_URL}kits/${id}.webp`
+
+/** One mode's card: its picture and name, what it is, the kit at a glance, and who's searching. */
+function ModeCard({ id, i, picked, note, onPick, sword, duel = true, compact = false }) {
   const m = MODES[id]
   const icons = [...new Set(m.hotbar.filter(Boolean).map((s) => s[0]))].slice(0, 5)
   return (
     <button
       type="button"
-      className={`mc-btn mode-card flex flex-col text-left ${picked ? 'picked' : ''}`}
-      style={{ '--c': picked ? m.color : '#3b3352', '--i': i }}
+      className={`mc-tile mode-card flex flex-col text-left ${picked ? 'picked' : ''} ${compact ? 'compact' : ''}`}
+      style={{ '--i': i }}
       onClick={() => onPick(id)}
     >
-      <span className="flex items-center" style={{ gap: u(6) }}>
-        <span className="chip" style={{ fontSize: u(11), padding: `0 ${u(5)}`, color: '#ffd23b' }}>
-          {i + 1}
-        </span>
-        <span className="txt-o" style={{ fontSize: u(17), fontWeight: 700, color: m.color }}>
-          {t(m.name)}
+      <span className="mode-art" style={{ '--kc': m.color }}>
+        <img src={kitArt(id)} alt="" loading="lazy" decoding="async" draggable={false} />
+        <span className="mode-art-name flex items-center" style={{ gap: u(6) }}>
+          <span className="chip" style={{ fontSize: u(11), padding: `0 ${u(5)}`, color: '#ffd23b' }}>
+            {i + 1}
+          </span>
+          <span className="txt-o" style={{ fontSize: u(19), fontWeight: 700, color: m.color }}>
+            {t(m.name)}
+          </span>
         </span>
       </span>
-      <span className="txt-o" style={{ fontSize: u(12), color: '#e6e0ff', lineHeight: 1.2, minHeight: u(30) }}>
-        {t(m.blurb)}
-      </span>
-      <span className="flex" style={{ gap: u(3) }}>
+      {!compact && (
+        <span className="txt-o" style={{ fontSize: u(12), color: '#ffffff', lineHeight: 1.2, minHeight: u(30) }}>
+          {t(m.blurb)}
+        </span>
+      )}
+      <span className="flex items-center" style={{ gap: u(3) }}>
         {icons.map((itemId) => (
-          <span key={itemId} className="slot flex items-center justify-center" style={{ width: u(28), height: u(28) }} title={ITEMS[itemId]?.name}>
+          <span key={itemId} className="mc-slot flex items-center justify-center" style={{ width: u(28), height: u(28) }} title={ITEMS[itemId]?.name}>
             <img src={itemIcon(itemId, sword)} alt="" className="pixelated" style={{ width: '78%', height: '78%' }} draggable={false} />
           </span>
         ))}
       </span>
-      <span className="txt-o" style={{ fontSize: u(11), color: '#bdb3e0' }}>
-        {duel ? `${t('CASUAL')} · ${t('first to {n}', { n: m.ft })} · ` : ''}
-        {note}
-      </span>
+      {!compact && (
+        <span className="txt-o" style={{ fontSize: u(11), color: '#f2f2f2' }}>
+          {duel ? `${t('CASUAL')} · ${t('first to {n}', { n: m.ft })} · ` : ''}
+          {note}
+        </span>
+      )}
     </button>
   )
 }
@@ -59,6 +70,7 @@ export function ModesPanel() {
   const close = useGame((s) => s.closePanel)
   const phase = useGame((s) => s.phase)
   const sword = useGame((s) => s.profile.sword)
+  const net = useGame((s) => s.net.mode)
   const pick = (id) => {
     actions.queue(id)
     close()
@@ -74,22 +86,17 @@ export function ModesPanel() {
   })
   return (
     <div className="panel-wrap absolute inset-0 z-30 flex items-center justify-center bg-black/50" onPointerDown={(e) => e.target === e.currentTarget && close()}>
-      <div className="mc-panel pop-in pointer-events-auto flex flex-col text-white" style={{ width: `min(100%, ${u(900)})`, maxHeight: '100%', padding: u(14), gap: u(10) }}>
+      <div className="mc-gui pop-in pointer-events-auto flex flex-col" style={{ width: `min(100%, ${u(900)})`, maxHeight: '100%', padding: u(16), gap: u(10) }}>
         <div className="flex items-center justify-between" style={{ gap: u(10) }}>
-          <div className="flex items-center" style={{ gap: u(10) }}>
-            <span className="chip" style={{ fontSize: u(14), background: '#2bb37a', color: '#fff', fontWeight: 700 }}>
-              {t('CASUAL')}
-            </span>
-            <Fancy size={30} from="#ffffff" to="#ffb21a">
-              {t('CHOOSE YOUR MODE')}
-            </Fancy>
-          </div>
-          <Button color="#d8443a" style={{ width: u(46), height: u(46), fontSize: u(24) }} onClick={close}>
+          <span className="mc-title" style={{ fontSize: u(28) }}>
+            {t('CHOOSE YOUR MODE')}
+          </span>
+          <button type="button" className="mc-stone" style={{ width: u(44), height: u(44), fontSize: u(22) }} onClick={close}>
             ✕
-          </Button>
+          </button>
         </div>
-        <span className="txt-o" style={{ fontSize: u(13), color: '#cfc6ee' }}>
-          {t('1v1 duels · practice for real · a bot steps in if nobody else is searching')}
+        <span className="mc-note" style={{ fontSize: u(13) }}>
+          {net === 'online' ? t('1v1 duels against real players · you are paired with anyone searching (same mode first, else the mode of whoever waited longer)') : t('Duels are against real players only · offline, nobody else can join your queue')}
         </span>
         <div className="mode-grid overflow-y-auto">
           {MODE_IDS.map((id, i) => (
@@ -104,7 +111,7 @@ export function ModesPanel() {
             />
           ))}
         </div>
-        <span className="txt-o" style={{ fontSize: u(12), color: '#bdb3e0' }}>
+        <span className="mc-note" style={{ fontSize: u(12) }}>
           {t('Click a mode or press 1-9 to join its queue · Esc closes')}
         </span>
       </div>
@@ -122,21 +129,21 @@ export function KitPicker() {
   if (panel) return null
   return (
     <div className="absolute inset-0 z-20 flex items-center justify-center" style={{ background: 'rgba(8,4,20,0.45)' }}>
-      <div className="mc-panel pop-in pointer-events-auto flex flex-col text-white" style={{ width: `min(100%, ${u(900)})`, maxHeight: '100%', padding: u(14), gap: u(10) }}>
+      <div className="kit-picker mc-gui pop-in pointer-events-auto flex flex-col" style={{ padding: u(14), gap: u(8) }}>
         <div className="flex items-center justify-between" style={{ gap: u(10) }}>
-          <Fancy size={28} from="#e4fbff" to="#5f8bff">
-            {t('SPIRELANDS - PICK A KIT')}
-          </Fancy>
-          <Button color="#4a8f2c" style={{ padding: `${u(6)} ${u(16)}`, fontSize: u(16) }} onClick={() => actions.toLobby()}>
+          <span className="mc-title" style={{ fontSize: u(24) }}>
+            {t('PICK A KIT')}
+          </span>
+          <button type="button" className="mc-stone" style={{ padding: `${u(5)} ${u(14)}`, fontSize: u(15) }} onClick={() => actions.toLobby()}>
             {t('LOBBY')}
-          </Button>
+          </button>
         </div>
-        <span className="txt-o" style={{ fontSize: u(13), color: '#cfc6ee' }}>
-          {t('Free for all · kills heal you · the world mends itself · click a kit to fight with it')}
+        <span className="mc-note kit-note" style={{ fontSize: u(12) }}>
+          {t('Spirelands · free for all · kills heal you · click a kit')}
         </span>
-        <div className="mode-grid overflow-y-auto">
+        <div className="mode-grid kit-grid overflow-y-auto">
           {MODE_IDS.map((id, i) => (
-            <ModeCard key={id} id={id} i={i} sword={sword} picked={false} duel={false} note={MODES[id].regen ? t('Natural regen') : t('No natural regen')} onPick={(m) => actions.kit(m)} />
+            <ModeCard key={id} id={id} i={i} sword={sword} picked={false} duel={false} compact onPick={(m) => actions.kit(m)} />
           ))}
         </div>
       </div>
@@ -161,7 +168,7 @@ export function MapVote() {
   }, [options])
   return (
     <div className="absolute inset-0 z-20 flex items-center justify-center" style={{ background: 'rgba(8,4,20,0.35)' }}>
-      <div className="mc-panel pop-in pointer-events-auto flex flex-col items-center text-white" style={{ width: `min(100%, ${u(820)})`, padding: u(14), gap: u(10) }}>
+      <div className="mc-gui pop-in pointer-events-auto flex flex-col items-center" style={{ width: `min(100%, ${u(820)})`, padding: u(14), gap: u(10) }}>
         <span className="txt-o" style={{ fontSize: u(14), color: '#bdb3e0' }}>
           {t('{mode} 1v1', { mode: MODES[phase.mode]?.name || '' })} · {(phase.score || []).map((s) => s.name).join(' vs ')}
         </span>

@@ -16,6 +16,7 @@ function makeHost(extra = {}) {
   const rewards = []
   const parkour = []
   const host = new GameHost({
+    duelBots: true,
     send: (cid, type, payload) => sent.push({ cid, type, payload }),
     onReward: (cid, r) => rewards.push({ cid, ...r }),
     onParkour: (cid, ms) => parkour.push({ cid, ms }),
@@ -147,10 +148,12 @@ test('Spirelands is an island in the sea: spawns on land, water all round, walls
   assert.equal(world.sx, FFA_SIZE.x)
   for (const s of spawns) assert.equal(world.get(s.x, s.y - 1, s.z), B.GRASS)
   // Open sea at every edge.
-  for (const [x, z] of [[2, 96], [189, 96], [96, 2], [96, 189]]) assert.equal(world.get(x, FFA_SEA, z), B.WATER)
+  const mid = FFA_SIZE.x / 2
+  const far = FFA_SIZE.x - 3
+  for (const [x, z] of [[2, mid], [far, mid], [mid, 2], [mid, far]]) assert.equal(world.get(x, FFA_SEA, z), B.WATER)
   // Nobody walks (or swims) off the side of the world.
-  assert.equal(world.isSolid(-1, FFA_SEA, 96), true)
-  assert.equal(world.isSolid(FFA_SIZE.x, FFA_SEA, 96), true)
+  assert.equal(world.isSolid(-1, FFA_SEA, mid), true)
+  assert.equal(world.isSolid(FFA_SIZE.x, FFA_SEA, mid), true)
 })
 
 test('swimming: you sink slowly, swim up holding jump, climb out onto the shore, and nothing flags it', () => {
@@ -185,4 +188,100 @@ test('swimming: you sink slowly, swim up holding jump, climb out onto the shore,
   }
   assert.ok(body.x > 16.5 && body.y >= 8, `on the shore (${body.x.toFixed(1)}, ${body.y.toFixed(1)})`)
   assert.deepEqual(flags, [])
+})
+
+test('Spirelands loot chests: open one for gear, it is gone, and it fills again later', async () => {
+  const { LOOT } = await import('../../shared/balance.js')
+  const { B } = await import('../../shared/voxel.js')
+  const h = makeHost()
+  const { host } = h
+  host.join('a', 'Ann')
+  host.message('a', 'ffa', {})
+  host.message('a', 'kit', { mode: 'sword' })
+  h.tick(200)
+  const arena = host.arenas.get('ffa')
+  assert.ok(arena.chests.length >= 30, `plenty of chests (${arena.chests.length})`)
+  const c = arena.chests[0]
+  assert.equal(arena.world.get(c.x, c.y, c.z), B.LOOT_CHEST)
+  const a = host.entOf('a')
+  const before = a.inv.filter(Boolean).length
+  // Too far away: nothing.
+  host.message('a', 'loot', { x: c.x, y: c.y, z: c.z })
+  assert.equal(arena.world.get(c.x, c.y, c.z), B.LOOT_CHEST)
+  // Next to it: open.
+  Object.assign(a, { x: c.x + 1.5, y: c.y, z: c.z + 0.5 })
+  host.message('a', 'loot', { x: c.x, y: c.y, z: c.z })
+  assert.equal(arena.world.get(c.x, c.y, c.z), B.AIR, 'opened')
+  assert.ok(a.inv.filter(Boolean).length > before || h.sent.some((m) => m.type === 'looted'), 'gear in the inventory')
+  const looted = h.sent.find((m) => m.cid === 'a' && m.type === 'looted')
+  assert.ok(looted && looted.payload.items.length > 0)
+  // Opening it again does nothing; later it is back.
+  host.message('a', 'loot', { x: c.x, y: c.y, z: c.z })
+  Object.assign(a, { x: c.x + 6, z: c.z + 6 })
+  h.tick(LOOT.refillMs + 1000)
+  assert.equal(arena.world.get(c.x, c.y, c.z), B.LOOT_CHEST, 'filled again')
+})
+
+test('jump berries: bushes on the island; break one for berries, eat one and jump ten times as high, no fall damage', async () => {
+  const { EFFECTS, ITEMS } = await import('../../shared/balance.js')
+  const { B } = await import('../../shared/voxel.js')
+  const { world } = generateSpirelands()
+  let bushes = 0
+  for (let x = 0; x < world.sx; x += 1) for (let z = 0; z < world.sz; z += 1) {
+    const y = world.surface(x, z)
+    if (world.get(x, y + 1, z) === B.BERRY_BUSH) bushes += 1
+  }
+  assert.ok(bushes >= 40, `bushes about (${bushes})`)
+  assert.ok(EFFECTS.leap.jumpMul ** 2 >= 9.5, 'about ten times the height')
+  const h = makeHost()
+  const { host } = h
+  host.join('a', 'Ann')
+  host.message('a', 'ffa', {})
+  host.message('a', 'kit', { mode: 'sword' })
+  h.tick(200)
+  const a = host.entOf('a')
+  a.inv[1] = { id: 'jump_berry', n: 2 }
+  a.sel = 1
+  a.lastUseAt = 0
+  host.useItem(a, 1, [0, 0, -1])
+  assert.ok(a.effects.leap > h.clock.t, 'leaping')
+  assert.ok(a.noFallUntil > h.clock.t + ITEMS.jump_berry.dur * 1000, 'no fall damage until after it ends')
+  assert.equal(a.inv[1].n, 1)
+})
+
+test('a full server: looks go out only when they change, kills send a small update; snapshots carry only who is near', () => {
+  const h = makeHost()
+  const { host } = h
+  for (let i = 0; i < 6; i += 1) {
+    host.join(`p${i}`, `P${i}`)
+    host.message(`p${i}`, 'ffa', {})
+    host.message(`p${i}`, 'kit', { mode: 'sword' })
+  }
+  h.tick(1000)
+  h.sent.length = 0
+  // A death: state only, no looks.
+  const arena = host.arenas.get('ffa')
+  const [a, b] = [host.entOf('p0'), host.entOf('p1')]
+  host.kill(arena, b, a, 'melee')
+  h.tick(400)
+  assert.ok(h.sent.some((m) => m.type === 'rstate'), 'small state update')
+  assert.ok(!h.sent.some((m) => m.type === 'roster'), 'no full roster for a kill')
+  const st = h.sent.find((m) => m.cid === 'p2' && m.type === 'rstate').payload.s
+  const i = st.indexOf(b.eid)
+  assert.equal(st[i + 3], 0, 'they show as down')
+  // Someone new: the full roster, looks and all.
+  h.sent.length = 0
+  host.join('p9', 'P9')
+  h.tick(400)
+  assert.ok(h.sent.some((m) => m.type === 'roster'))
+  // Snapshots in Spirelands: someone far across the island is left out.
+  const c = host.entOf('p2')
+  const d = host.entOf('p3')
+  Object.assign(d, { x: c.x + 200, z: c.z })
+  h.sent.length = 0
+  h.tick(200)
+  const snap = h.sent.filter((m) => m.cid === 'p2' && m.type === 'snap').at(-1).payload.e
+  const eids = snap.filter((_, k) => k % 9 === 0)
+  assert.ok(!eids.includes(d.eid), 'far player not sent')
+  assert.ok(eids.includes(c.eid), 'yourself (and anyone near) still in it')
 })

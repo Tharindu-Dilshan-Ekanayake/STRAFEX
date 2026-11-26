@@ -4,12 +4,14 @@ import { EFFECTS, ITEMS, MODES, OFFHAND, TEAMS } from '@shared/balance'
 
 import { exitPointerLock, selectSlot } from '../../game/input'
 import { itemIcon } from '../../game/art/items'
+import { day } from '../../game/dayNight'
 import { runtime } from '../../game/runtime'
 import { actions } from '../../net/actions'
 import { useGame } from '../../store/game'
 import { formatClock, u, useNow } from '../format'
 import { Button, Fancy, Hearts } from '../kit'
 import { t } from '../i18n'
+import PixelIcon from '../PixelIcon'
 
 /** The HUD in a fight (and while watching): banners, the duel score, crosshair, hearts and hotbar. */
 
@@ -69,7 +71,7 @@ export function DuelTop() {
   const score = phase.score || []
   return (
     <div className="duel-top flex flex-col items-center" style={{ gap: u(4) }}>
-      <div className="mc-panel flex items-center" style={{ gap: u(14), padding: `${u(5)} ${u(16)}` }}>
+      <div className="mc-hud flex items-center" style={{ gap: u(14), padding: `${u(5)} ${u(16)}` }}>
         {score.map((s, i) => (
           <div key={s.eid} className="flex items-center" style={{ gap: u(10), flexDirection: i ? 'row-reverse' : 'row' }}>
             <span className="txt-o" style={{ fontSize: u(18), fontWeight: 700, color: TEAMS[s.team]?.color || '#fff' }}>
@@ -157,7 +159,7 @@ function ShieldChip() {
   const left = off - (now - runtime.me.shieldOffAt)
   if (!has || left <= 0) return null
   return (
-    <span className="mc-panel txt-o" style={{ padding: `${u(2)} ${u(8)}`, fontSize: u(14), color: '#ff9a3c' }}>
+    <span className="mc-hud txt-o" style={{ padding: `${u(2)} ${u(8)}`, fontSize: u(14), color: '#ff9a3c' }}>
       🛡 {t('SHIELD DOWN')} {Math.ceil(left / 1000)}s
     </span>
   )
@@ -190,6 +192,16 @@ export function BottomBar() {
           <ShieldChip />
           <EffectChips effects={me.effects} />
         </div>
+        {/* Under water: your breath, as bubbles (they pop as it runs out). */}
+        {me.air !== undefined && me.air < 10 && (
+          <div className="air-row flex w-full justify-end" style={{ gap: u(1) }}>
+            {Array.from({ length: 10 }, (_, i) => (
+              <span key={i} style={{ opacity: i < me.air ? 1 : 0, transition: 'opacity 0.15s' }}>
+                <PixelIcon name="bubble" size={u(20)} className="" />
+              </span>
+            ))}
+          </div>
+        )}
         <div className="hearts-row flex w-full items-end justify-between" style={{ gap: u(16) }}>
           <Hearts hp={me.hp} maxHp={me.maxHp} absorb={me.absorb || 0} />
           {me.kills > 0 && (
@@ -198,7 +210,7 @@ export function BottomBar() {
             </div>
           )}
         </div>
-        <div className="hotbar pointer-events-auto flex items-center" style={{ gap: u(3) }}>
+        <div className="hotbar pointer-events-auto flex items-center">
           {/* The offhand (left hand), and the inventory (E). */}
           <OffhandSlot slot={me.inv[OFFHAND]} sword={sword} />
           {Array.from({ length: 9 }, (_, i) => {
@@ -216,11 +228,11 @@ export function BottomBar() {
               >
                 {slot && <img src={itemIcon(slot.id, sword)} alt="" className="pixelated" style={{ width: '68%', height: '68%' }} draggable={false} />}
                 {slot && slot.n > 1 && (
-                  <span key={slot.n} className="txt-o bump absolute" style={{ right: u(3), bottom: u(-2), fontSize: u(18), fontWeight: 700 }}>
+                  <span key={slot.n} className="slot-count bump absolute" style={{ fontSize: u(16) }}>
                     {slot.n}
                   </span>
                 )}
-                <span className="absolute opacity-50" style={{ left: u(4), top: u(1), fontSize: u(11) }}>
+                <span className="slot-num absolute" style={{ fontSize: u(9) }}>
                   {i + 1}
                 </span>
               </button>
@@ -241,7 +253,7 @@ function OffhandSlot({ slot, sword }) {
       <button
         type="button"
         className="slot relative flex items-center justify-center"
-        style={{ width: 'var(--slot)', height: 'var(--slot)', marginRight: u(10), borderStyle: 'dashed' }}
+        style={{ width: 'var(--slot)', height: 'var(--slot)', marginRight: u(12) }}
         title={t('Offhand (F swaps hands)')}
         onPointerDown={(e) => {
           e.stopPropagation()
@@ -249,9 +261,10 @@ function OffhandSlot({ slot, sword }) {
           open('inventory')
         }}
       >
-        {slot ? <img src={itemIcon(slot.id, sword)} alt="" className="pixelated" style={{ width: '68%', height: '68%' }} draggable={false} /> : <span style={{ opacity: 0.35, fontSize: u(18) }}>🛡</span>}
+        {/* Empty: a faint shield, like Minecraft's empty offhand slot. */}
+        <img src={itemIcon(slot ? slot.id : 'shield', sword)} alt="" className="pixelated" style={{ width: '68%', height: '68%', opacity: slot ? 1 : 0.22, filter: slot ? 'none' : 'grayscale(1)' }} draggable={false} />
         {slot && slot.n > 1 && (
-          <span className="txt-o absolute" style={{ right: u(3), bottom: u(-2), fontSize: u(16), fontWeight: 700 }}>
+          <span className="slot-count absolute" style={{ fontSize: u(16) }}>
             {slot.n}
           </span>
         )}
@@ -267,7 +280,7 @@ function BagButton() {
     <button
       type="button"
       className="slot flex items-center justify-center"
-      style={{ width: 'var(--slot)', height: 'var(--slot)', marginLeft: u(10) }}
+      style={{ width: 'var(--slot)', height: 'var(--slot)', marginLeft: u(12) }}
       title={t('Inventory (E)')}
       onPointerDown={(e) => {
         e.stopPropagation()
@@ -275,12 +288,12 @@ function BagButton() {
         open('inventory')
       }}
     >
-      <span style={{ fontSize: u(22) }}>🎒</span>
+      <PixelIcon name="backpack" size="62%" className="" />
     </button>
   )
 }
 
-const EFFECT_LABELS = { speed: ['SPEED', '#5fd3ff'], jump: ['JUMP', '#7cff6b'], strength: ['STRENGTH', '#ff5050'], regen: ['REGEN', '#ff7bd5'] }
+const EFFECT_LABELS = { speed: ['SPEED', '#5fd3ff'], jump: ['JUMP', '#7cff6b'], leap: ['SUPER JUMP', '#b4ff6a'], strength: ['STRENGTH', '#ff5050'], regen: ['REGEN', '#ff7bd5'] }
 
 function EffectChips({ effects }) {
   const now = useNow(500)
@@ -290,7 +303,7 @@ function EffectChips({ effects }) {
   return (
     <div className="flex" style={{ gap: u(6) }}>
       {list.map(([k, ms]) => (
-        <span key={k} className="mc-panel txt-o" style={{ padding: `${u(2)} ${u(8)}`, fontSize: u(14), color: EFFECT_LABELS[k][1] }}>
+        <span key={k} className="mc-hud txt-o" style={{ padding: `${u(2)} ${u(8)}`, fontSize: u(14), color: EFFECT_LABELS[k][1] }}>
           {t(EFFECT_LABELS[k][0])} {Math.ceil((ms - (now - at)) / 1000)}s
         </span>
       ))}
@@ -305,7 +318,7 @@ export function SpectateBar() {
   if (phase.kind !== 'duel' || phase.phase === 'ended') return null
   return (
     <div className="pointer-events-auto absolute left-1/2 flex -translate-x-1/2 flex-col items-center" style={{ bottom: u(24), gap: u(8) }}>
-      <div className="mc-panel flex flex-col items-center" style={{ padding: `${u(6)} ${u(18)}`, minWidth: u(220) }}>
+      <div className="mc-hud flex flex-col items-center" style={{ padding: `${u(6)} ${u(18)}`, minWidth: u(220) }}>
         <span className="txt-o" style={{ fontSize: u(13), color: '#bdb3e0' }}>
           {t('SPECTATING')}
         </span>
@@ -330,10 +343,18 @@ export function FfaTop() {
         {t('SPIRELANDS')}
       </Fancy>
       <span className="txt-o" style={{ fontSize: u(14), color: '#d9ccff' }}>
-        {t('Free for all · {n} fighting', { n: phase.alive || 0 })}
+        {t('Free for all · {n} fighting', { n: phase.alive || 0 })} · <TimeOfDay />
       </span>
     </div>
   )
+}
+
+const DAY_LABELS = { morning: ['☀ MORNING', '#ffd2a0'], day: ['☀ DAY', '#fff3b0'], evening: ['☀ EVENING', '#ffb27a'], night: ['☾ NIGHT', '#bcd0ff'] }
+/** Spirelands' time of day, read off the clock every few seconds. */
+function TimeOfDay() {
+  useNow(3000)
+  const [label, color] = DAY_LABELS[day.phase] || DAY_LABELS.day
+  return <span style={{ color }}>{t(label)}</span>
 }
 
 /** Back to the lobby (or forfeit a duel) from a fight. */
@@ -342,8 +363,8 @@ export function LeaveButton() {
   const zone = useGame((s) => s.zone)
   if (zone !== 'match' || (phase.kind === 'duel' && phase.phase === 'ended')) return null
   return (
-    <Button className="leave-btn pointer-events-auto" color="#5a4a6e" style={{ padding: `${u(4)} ${u(12)}`, fontSize: u(13) }} onClick={() => actions.toLobby()}>
+    <button type="button" className="mc-stone leave-btn pointer-events-auto" style={{ height: u(50), padding: `0 ${u(14)}`, fontSize: u(14) }} onClick={() => actions.toLobby()}>
       {phase.kind === 'duel' ? t('FORFEIT') : t('LOBBY')}
-    </Button>
+    </button>
   )
 }

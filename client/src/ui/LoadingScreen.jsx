@@ -46,7 +46,7 @@ export default function LoadingScreen({ done }) {
         <Fancy size={72} from="#fff7b0" to="#ffb21a" style={{ fontFamily: 'Silkscreen' }}>STRAFEX</Fancy>
         <span className="txt-o" style={{ fontSize: u(18), letterSpacing: '0.2em' }}>PVP · PRACTICE · SPIRELANDS</span>
       </div>
-      <div className="mc-panel" style={{ width: u(360), height: u(26), padding: u(4) }}>
+      <div className="mc-slot" style={{ width: u(360), height: u(26), padding: u(4) }}>
         <div style={{ width: `${pct}%`, height: '100%', background: '#7cff6b', transition: 'width 0.3s' }} />
       </div>
       <div className="txt-o" style={{ fontSize: u(18) }}>

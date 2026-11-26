@@ -58,6 +58,14 @@ export const B = {
   HAY: 47,
   MUSHROOM: 48,
   LANTERN: 49,
+  FIRE: 50,
+  // Flowing water, one block further from its source each level (51 = 1 ... 57 = 7).
+  FLOW_1: 51,
+  FLOW_7: 57,
+  LOOT_CHEST: 58,
+  BERRY_BUSH: 59,
+  TORCH: 60,
+  CAMPFIRE: 61,
 }
 
 /**
@@ -135,6 +143,30 @@ BLOCKS[B.HAY] = def('Hay Bale', ['hay_top', 'hay_side', 'hay_top'], 0.5, 'planks
 /** A giant mushroom's cap: red with white spots. */
 BLOCKS[B.MUSHROOM] = def('Mushroom Cap', 'mushroom', 0.4, null)
 BLOCKS[B.LANTERN] = def('Lantern', ['lantern_top', 'lantern', 'lantern_top'], 0.4, null, { glow: true })
+// Flames where a fire arrow landed: walk through them and you burn. Burns out by itself.
+BLOCKS[B.FIRE] = def('Fire', 'fire', 0, null, { solid: false, render: 'cross', glow: true })
+// Flowing water: falls, then spreads up to 7 blocks from its source (host.js settles it).
+for (let id = B.FLOW_1; id <= B.FLOW_7; id += 1) BLOCKS[id] = def('Flowing Water', 'water', Infinity, null, { solid: false })
+
+// Loot chests in Spirelands: right click (or hit) one for random gear; it fills up again later.
+BLOCKS[B.LOOT_CHEST] = def('Loot Chest', ['chest_top', 'chest_side', 'chest_top'], Infinity, null)
+// Jump berry bushes in Spirelands: break one for berries (eat them: jump sky-high a while).
+BLOCKS[B.BERRY_BUSH] = def('Jump Berry Bush', 'berry_bush', 0.15, 'jump_berry', { solid: false, render: 'cross' })
+// Made from wood (crafting): a torch lights a little round it; a campfire lights a lot, and
+// warms whoever sits by it (slow healing) - but don't stand in it.
+BLOCKS[B.TORCH] = def('Torch', 'torch', 0, 'torch', { solid: false, render: 'cross', glow: true, light: 7 })
+BLOCKS[B.CAMPFIRE] = def('Campfire', 'campfire', 0.4, 'campfire', { solid: false, render: 'cross', glow: true, light: 10 })
+// How far the other glowing blocks light the dark (in blocks; night only).
+BLOCKS[B.LANTERN].light = 8
+BLOCKS[B.LAMP].light = 8
+BLOCKS[B.FIRE].light = 5
+
+/** Water of any kind: a source (still water) or flowing. */
+export const isWater = (id) => id === B.WATER || (id >= B.FLOW_1 && id <= B.FLOW_7)
+/** How far water is from its source: 0 for a source, 1-7 flowing, -1 not water. */
+export const waterLevel = (id) => (id === B.WATER ? 0 : id >= B.FLOW_1 && id <= B.FLOW_7 ? id - B.FLOW_1 + 1 : -1)
+/** The flowing-water block `level` (1-7) blocks from its source. */
+export const flowBlock = (level) => B.FLOW_1 + level - 1
 
 export const isSolidBlock = (id) => Boolean(BLOCKS[id]?.solid)
 export const isLucky = (id) => Boolean(BLOCKS[id]?.lucky)

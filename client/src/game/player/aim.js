@@ -1,7 +1,7 @@
 import { ITEMS, MELEE_REACH, OFFHAND, REACH } from '@shared/balance'
 import { ARENA_BUILD_HEIGHT, ARENA_FLOOR } from '@shared/maps'
 import { cellOverlapsBody, PLAYER } from '@shared/physics'
-import { B, BLOCKS, raycastVoxels, rayBox } from '@shared/voxel'
+import { B, BLOCKS, isWater, raycastVoxels, rayBox } from '@shared/voxel'
 
 import { runtime } from '../runtime'
 import { worldState } from '../world'
@@ -21,7 +21,7 @@ export function offId() {
 }
 
 /** Things right click does something with. */
-const USABLE = new Set(['block', 'crystal', 'food', 'potion', 'throw', 'splash', 'bow', 'spear'])
+const USABLE = new Set(['block', 'crystal', 'food', 'potion', 'throw', 'splash', 'bow', 'spear', 'bucket'])
 
 /**
  * What right click uses, like the classic games: the right hand if it holds something
@@ -66,7 +66,7 @@ function placeable(world, b, x, y, z) {
   if (!world.inBounds(x, y, z) || y < 1 || y >= world.sy - 1) return false
   if (worldState.arena === 'duel' && y > ARENA_FLOOR + ARENA_BUILD_HEIGHT) return false
   const here = world.get(x, y, z)
-  if (here !== B.AIR && BLOCKS[here].render !== 'cross' && here !== B.WATER) return false
+  if (here !== B.AIR && BLOCKS[here].render !== 'cross' && !isWater(here)) return false
   const touching =
     world.isSolid(x + 1, y, z) || world.isSolid(x - 1, y, z) || world.isSolid(x, y + 1, z) || world.isSolid(x, y - 1, z) || world.isSolid(x, y, z + 1) || world.isSolid(x, y, z - 1)
   if (!touching) return false
@@ -94,6 +94,24 @@ export function findPlacement(world, b, eyeY, dx, dy, dz) {
     pl.x = t.x
     pl.y = t.y + 1
     pl.z = t.z
+    pl.ok = true
+    return
+  }
+  if (kind === 'bucket') {
+    // Water pours against the face you aim at - into the cell you stand in, too.
+    if (!ITEMS[rightClickTarget().id].fill) return
+    const t = runtime.target
+    if (t.kind !== 'block') return
+    // Aimed at flames (or a plant): the water goes right there - and puts them out.
+    const into = BLOCKS[t.id]?.render === 'cross'
+    const x = into ? t.x : t.x + t.nx
+    const y = into ? t.y : t.y + t.ny
+    const z = into ? t.z : t.z + t.nz
+    const here = world.get(x, y, z)
+    if (here !== B.AIR && BLOCKS[here]?.render !== 'cross') return
+    pl.x = x
+    pl.y = y
+    pl.z = z
     pl.ok = true
     return
   }
@@ -158,4 +176,11 @@ function bridgeRow(world, b, eyeY, dx, dy, dz, fy) {
       }
     }
   }
+}
+
+/** The water cell you're looking at within reach (for an empty bucket), or null. */
+export function findWater(world, b, dx, dy, dz) {
+  // Only still water fills a bucket (flowing water runs through it, as in Minecraft).
+  const hit = raycastVoxels(world, b.x, b.y + PLAYER.eye, b.z, dx, dy, dz, REACH, (id) => isWater(id) || BLOCKS[id]?.solid)
+  return hit && world.get(hit.x, hit.y, hit.z) === B.WATER ? hit : null
 }

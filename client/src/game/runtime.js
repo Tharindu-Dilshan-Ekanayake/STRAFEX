@@ -86,6 +86,8 @@ export const runtime = {
   useAnimUntil: 0,
   /** Holding right click to eat or drink: when it started (0 = not). */
   eatStart: 0,
+  /** When the mouse was first captured this visit (performance.now; 0 = not yet). */
+  firstLockAt: 0,
   /** Which hand right click is using ('main' | 'off'). */
   useHand: 'main',
   /** Shield raised (holding right click with a shield in a hand). */

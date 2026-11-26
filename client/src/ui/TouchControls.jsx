@@ -36,6 +36,8 @@ function actionFor(item, shield) {
       return { icon: 'bow', label: 'SHOOT', color: '150,100,50' }
     case 'spear':
       return { icon: 'ball', label: 'LUNGE', color: '70,170,90' }
+    case 'bucket':
+      return item.fill ? { icon: 'ball', label: 'POUR', color: '63,140,255' } : { icon: 'ball', label: 'SCOOP', color: '90,110,140' }
     default:
       // Anything else: right click raises the shield, if you have one.
       return shield ? { icon: 'cube', label: 'BLOCK', color: '120,120,140' } : null
@@ -147,13 +149,14 @@ export default function TouchControls() {
   // The use button follows the hand right click would use: the right, else the left.
   const use = actionFor(item, hasShield) || actionFor(offItem, false)
   const attackIcon = item?.kind === 'sword' ? 'sword' : 'pick'
+  // Minecraft-style touch buttons: square, see-through, tinted by what they do.
   const face = (size, rgb, alpha = 0.82) => ({
     width: u(size),
     height: u(size),
-    background: `radial-gradient(circle at 35% 30%, rgba(${rgb},${alpha + 0.12}) 0%, rgba(${rgb},${alpha}) 55%, rgba(${rgb},${alpha - 0.15}) 100%)`,
+    background: `linear-gradient(180deg, rgba(${rgb},${Math.min(0.85, alpha - 0.1)}) 0%, rgba(${rgb},${Math.max(0.35, alpha - 0.3)}) 100%)`,
   })
   const label = (text, size = 13) => (
-    <span className="txt-o" style={{ fontSize: u(size), marginTop: u(2), letterSpacing: '0.05em' }}>
+    <span className="tbtn-label" style={{ fontSize: u(size - 1), marginTop: u(3) }}>
       {text}
     </span>
   )
@@ -162,12 +165,12 @@ export default function TouchControls() {
     <div className="touch-root absolute inset-0 z-[5]" data-zone={zone} onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd} onTouchCancel={onEnd} style={{ touchAction: 'none' }}>
       {/* The stick: where it rests until you touch, then under your thumb. */}
       {knob ? (
-        <div className="pointer-events-none absolute" style={{ left: knob.ox - STICK, top: knob.oy - STICK, width: STICK * 2, height: STICK * 2, borderRadius: '50%', background: 'radial-gradient(circle, rgba(255,255,255,0.08), rgba(255,255,255,0.2))', border: '3px solid rgba(255,255,255,0.45)' }}>
-          <div className="absolute" style={{ left: STICK - 28 + knob.dx, top: STICK - 28 + knob.dy, width: 56, height: 56, borderRadius: '50%', background: 'radial-gradient(circle at 35% 30%, #ffffff, #cfd8ff)', border: '3px solid rgba(13,10,24,0.6)', boxShadow: '0 4px 0 rgba(0,0,0,0.3)' }} />
+        <div className="stick-ring pointer-events-none absolute" style={{ left: knob.ox - STICK, top: knob.oy - STICK, width: STICK * 2, height: STICK * 2 }}>
+          <div className="stick-knob absolute" style={{ left: STICK - 28 + knob.dx, top: STICK - 28 + knob.dy, width: 56, height: 56 }} />
         </div>
       ) : (
-        <div className="stick-ghost pointer-events-none absolute flex items-center justify-center" style={{ left: 28, bottom: 28, width: STICK * 2, height: STICK * 2, borderRadius: '50%', border: '3px dashed rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.06)' }}>
-          <span className="txt-o" style={{ fontSize: u(14), opacity: 0.8 }}>
+        <div className="stick-ghost stick-ring pointer-events-none absolute flex items-center justify-center" style={{ left: 28, bottom: 28, width: STICK * 2, height: STICK * 2, opacity: 0.75 }}>
+          <span className="tbtn-label" style={{ fontSize: u(14) }}>
             MOVE
           </span>
         </div>

@@ -50,7 +50,13 @@ export function prepareAudio() {
   if (ctx.state === 'running') ctx.suspend()
   master = ctx.createGain()
   applyMaster()
-  master.connect(ctx.destination)
+  const comp = ctx.createDynamicsCompressor()
+  comp.threshold.value = -16
+  comp.knee.value = 10
+  comp.ratio.value = 4
+  comp.attack.value = 0.003
+  comp.release.value = 0.18
+  master.connect(comp).connect(ctx.destination)
   echo = createEcho()
   noiseBuffer = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate)
   const data = noiseBuffer.getChannelData(0)
@@ -202,7 +208,7 @@ export function setAmbience(kind, level) {
 
 /** What a block sounds like: 'soft' | 'stone' | 'wood' | 'cloth' | 'glass' | 'lucky'. */
 const MATERIAL = new Map()
-for (const id of [B.GRASS, B.DIRT, B.LEAVES, B.SAND, B.SNOW_GRASS, B.SNOW, B.PATH, B.FROSTING, B.CANDY_PINK, B.TALL_GRASS, B.FLOWER_RED, B.FLOWER_YELLOW, B.CACTUS]) MATERIAL.set(id, 'soft')
+for (const id of [B.GRASS, B.DIRT, B.LEAVES, B.SAND, B.SNOW_GRASS, B.SNOW, B.PATH, B.FROSTING, B.CANDY_PINK, B.TALL_GRASS, B.FLOWER_RED, B.FLOWER_YELLOW, B.CACTUS, B.BERRY_BUSH]) MATERIAL.set(id, 'soft')
 for (const id of [B.PLANKS, B.LOG, B.TNT]) MATERIAL.set(id, 'wood')
 for (const id of [B.WOOL_WHITE, B.WOOL_RED, B.WOOL_BLUE, B.WOOL_YELLOW]) MATERIAL.set(id, 'cloth')
 for (const id of [B.GLASS, B.ICE, B.CAGE, B.CRYSTAL]) MATERIAL.set(id, 'glass')
@@ -277,6 +283,61 @@ function noiseAt(t, { duration = 0.2, volume = 0.2, from = 800, to = 300, q = 1,
   src.stop(t + duration + 0.02)
 }
 
+/** A little pitch wobble (+-amt), so no two hits sound exactly alike. */
+const vary = (amt = 0.08) => 1 + (Math.random() * 2 - 1) * amt
+
+/**
+ * A blow landing on a body: the thump in the chest (a falling sine), the crack of contact
+ * (a bright noise click) and the slap (mid noise). `level` 0..1.
+ */
+function impact(level, { thump = 95, crack = 2600, flesh = 700, at = 0 } = {}) {
+  const v = vary()
+  tone(thump * v, { at, type: 'sine', duration: 0.16, volume: 0.42 * level, slideTo: thump * 0.45 * v, attack: 0.002 })
+  noise({ at, duration: 0.045, volume: 0.32 * level, from: crack * v, to: crack * 0.3, q: 0.7, type: 'lowpass' })
+  noise({ at, duration: 0.12, volume: 0.22 * level, from: flesh * 1.4 * v, to: flesh * 0.6, q: 1.2 })
+}
+
+/** Struck metal (armour, a blade): a few inharmonic partials ringing out. */
+function ring(level, base = 620, at = 0) {
+  const b = base * vary(0.06)
+  ;[[1, 0.05, 0.32], [2.76, 0.032, 0.22], [5.4, 0.02, 0.14], [8.93, 0.012, 0.09]].forEach(([r, vol, dur]) =>
+    tone(b * r, { at, type: 'sine', duration: dur, volume: vol * level, attack: 0.002 }),
+  )
+}
+
+/**
+ * A voice-like grunt: a buzzing tone shaped by two vocal formants (an "uh"), its pitch
+ * sagging, with a breath of noise. `pitch` Hz, `dur` s.
+ */
+function grunt({ pitch = 150, dur = 0.2, volume = 0.2, vowel = [520, 980], at = 0 } = {}) {
+  whenDue(at, (t) => {
+    const osc = ctx.createOscillator()
+    osc.type = 'sawtooth'
+    const p = pitch * vary(0.1)
+    osc.frequency.setValueAtTime(p, t)
+    osc.frequency.exponentialRampToValueAtTime(p * 0.7, t + dur)
+    const env = ctx.createGain()
+    env.gain.setValueAtTime(0.0001, t)
+    env.gain.exponentialRampToValueAtTime(volume, t + 0.018)
+    env.gain.setTargetAtTime(volume * 0.5, t + 0.05, 0.05)
+    env.gain.exponentialRampToValueAtTime(0.0001, t + dur)
+    const out = ctx.createGain()
+    out.gain.value = 1.6
+    osc.connect(env)
+    for (const f of vowel) {
+      const bp = ctx.createBiquadFilter()
+      bp.type = 'bandpass'
+      bp.frequency.value = f * vary(0.05)
+      bp.Q.value = 7
+      env.connect(bp).connect(out)
+    }
+    out.connect(master)
+    osc.start(t)
+    osc.stop(t + dur + 0.02)
+  })
+  noise({ at, duration: dur * 0.8, volume: volume * 0.25, from: 1400, to: 700, q: 0.8 })
+}
+
 /** An arpeggio of chiptune notes (semitones above `base`), `step` s apart. */
 function arp(base, semis, { step = 0.06, type = 'square', volume = 0.08, duration = 0.12, echo: wet = true } = {}) {
   semis.forEach((s, i) => tone(base * 2 ** (s / 12), { at: i * step, type, volume, duration, echo: wet }))
@@ -333,18 +394,60 @@ export const sfx = {
     noise({ duration: 0.08, volume: 0.16, from: k[0], to: k[1], q: 2 })
     tone(k[2], { type: 'triangle', duration: 0.05, volume: 0.06, slideTo: k[2] * 0.7 })
   },
+  /** A weapon cutting the air: a whoosh that swells and falls away. */
   swing() {
-    if (ready('swing', 90)) noise({ duration: 0.12, volume: 0.06, from: 2500, to: 700, q: 3 })
+    if (!ready('swing', 90)) return
+    whenDue(0, (t) => {
+      const src = ctx.createBufferSource()
+      src.buffer = noiseBuffer
+      src.loop = true
+      const bp = ctx.createBiquadFilter()
+      bp.type = 'bandpass'
+      bp.Q.value = 1.4
+      const v = vary(0.12)
+      bp.frequency.setValueAtTime(500 * v, t)
+      bp.frequency.exponentialRampToValueAtTime(2400 * v, t + 0.07)
+      bp.frequency.exponentialRampToValueAtTime(700 * v, t + 0.2)
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0.0001, t)
+      g.gain.exponentialRampToValueAtTime(0.13, t + 0.06)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22)
+      src.connect(bp).connect(g).connect(master)
+      src.start(t, Math.random() * 0.5)
+      src.stop(t + 0.25)
+    })
   },
+  /** Your hit lands: a thump on the body and a ring off their armour. */
   hit(level = 1) {
     if (!ready('hit', 60) || level <= 0.02) return
-    noise({ duration: 0.09, volume: 0.25 * level, from: 1800, to: 400, q: 1.5 })
-    tone(180, { type: 'square', duration: 0.07, volume: 0.1 * level, slideTo: 90 })
+    impact(level)
+    ring(level * 0.8, 640)
   },
+  /** You're hit: the blow on your body and an "oof". */
   hurt() {
     if (!ready('hurt', 120)) return
-    tone(420, { type: 'square', duration: 0.12, volume: 0.14, slideTo: 200 })
-    noise({ duration: 0.1, volume: 0.18, from: 1200, to: 300 })
+    impact(0.9, { thump: 80, crack: 1800, flesh: 600 })
+    grunt({ pitch: 155, dur: 0.22, volume: 0.17, at: 0.01 })
+  },
+  /** Low on health: a heartbeat (lub-dub). */
+  heartbeat(level = 1) {
+    if (!ready('heartbeat', 450)) return
+    tone(62, { type: 'sine', duration: 0.14, volume: 0.32 * level, slideTo: 40, attack: 0.004 })
+    tone(55, { at: 0.17, type: 'sine', duration: 0.16, volume: 0.24 * level, slideTo: 36, attack: 0.004 })
+  },
+  /** Burning: the crackle of flames. */
+  crackle(level = 1) {
+    if (!ready('crackle', 120)) return
+    for (let i = 0; i < 4; i += 1) noise({ at: Math.random() * 0.2, duration: 0.012 + Math.random() * 0.02, volume: (0.08 + Math.random() * 0.1) * level, from: 2500 + Math.random() * 4000, to: 1500, q: 2, type: 'highpass' })
+    noise({ duration: 0.25, volume: 0.04 * level, from: 900, to: 400, q: 0.6, type: 'lowpass' })
+  },
+  /** Under water, short of air: a bubble or two rising. */
+  bubble(level = 1) {
+    if (!ready('bubble', 250)) return
+    for (let i = 0; i < 2; i += 1) {
+      const f = 280 + Math.random() * 260
+      tone(f, { at: i * 0.09 + Math.random() * 0.05, type: 'sine', duration: 0.07, volume: 0.07 * level, slideTo: f * 2.4 })
+    }
   },
   lucky(rare = false) {
     if (!ready('lucky', 100)) return
@@ -371,17 +474,26 @@ export const sfx = {
     noise({ duration: 0.5, volume: 0.35 * level, from: 6000, to: 200, q: 0.5 })
     tone(1600, { type: 'sawtooth', duration: 0.2, volume: 0.06 * level, slideTo: 60 })
   },
+  /** A bow loosed: the string's twang and the arrow's hiss. */
   bow() {
     if (!ready('bow', 80)) return
-    tone(300, { type: 'triangle', duration: 0.12, volume: 0.12, slideTo: 900 })
-    noise({ duration: 0.15, volume: 0.08, from: 3000, to: 1200, q: 2 })
+    const v = vary(0.06)
+    tone(165 * v, { type: 'sawtooth', duration: 0.22, volume: 0.07, slideTo: 150 * v, attack: 0.002 })
+    tone(330 * v, { type: 'triangle', duration: 0.16, volume: 0.06, slideTo: 300 * v, attack: 0.002 })
+    noise({ duration: 0.04, volume: 0.12, from: 2000, to: 600, q: 0.8, type: 'lowpass' })
+    noise({ at: 0.02, duration: 0.18, volume: 0.07, from: 3500, to: 1800, q: 2 })
   },
   throw(level = 1) {
     if (ready('throw', 80)) noise({ duration: 0.15, volume: 0.1 * level, from: 1200, to: 3000, q: 2 })
   },
+  /** Eating: crunchy bites. */
   eat() {
     if (!ready('eat', 120)) return
-    for (let i = 0; i < 3; i += 1) noise({ at: i * 0.1, duration: 0.06, volume: 0.14, from: 1100, to: 500, q: 3 })
+    for (let i = 0; i < 3; i += 1) {
+      const f = 900 + Math.random() * 1600
+      noise({ at: i * 0.11 + Math.random() * 0.02, duration: 0.05 + Math.random() * 0.03, volume: 0.15, from: f, to: f * 0.4, q: 1.8 })
+      noise({ at: i * 0.11 + 0.015, duration: 0.03, volume: 0.06, from: 5000, to: 2500, q: 1, type: 'highpass' })
+    }
   },
   drink() {
     if (!ready('drink', 120)) return
@@ -391,9 +503,12 @@ export const sfx = {
     if (!ready('kill', 200)) return
     arp(523, [0, 7, 12, 19], { step: 0.07, volume: 0.09 })
   },
+  /** You fall: a long groan, the thud of the body, then the jingle. */
   death() {
     if (!ready('death', 500)) return
-    arp(392, [0, -3, -7, -12], { step: 0.16, volume: 0.1, type: 'triangle', duration: 0.25 })
+    grunt({ pitch: 140, dur: 0.5, volume: 0.18, vowel: [480, 900] })
+    impact(1, { thump: 70, crack: 900, flesh: 400, at: 0.32 })
+    arp(392, [0, -3, -7, -12], { step: 0.16, volume: 0.07, type: 'triangle', duration: 0.25 })
   },
   win() {
     if (!ready('win', 1000)) return
@@ -431,19 +546,25 @@ export const sfx = {
   /** A hit stopped by a raised shield: a wooden thunk. */
   block(level = 1) {
     if (!ready('block', 80)) return
-    noise({ duration: 0.08, volume: 0.22 * level, from: 700, to: 200, q: 2 })
-    tone(140, { type: 'triangle', duration: 0.08, volume: 0.12 * level, slideTo: 90 })
+    const v = vary()
+    // Wood taking a blow: a hollow knock with a short resonance, and the iron rim.
+    tone(115 * v, { type: 'sine', duration: 0.14, volume: 0.3 * level, slideTo: 80 * v, attack: 0.002 })
+    noise({ duration: 0.1, volume: 0.24 * level, from: 900 * v, to: 250, q: 3 })
+    noise({ duration: 0.03, volume: 0.18 * level, from: 3000, to: 1000, q: 0.7, type: 'lowpass' })
+    ring(level * 0.5, 420)
   },
-  /** An axe knocks a shield down. */
+  /** An axe knocks a shield down: a splintering crack and the clatter of the rim. */
   shieldBreak() {
     if (!ready('shieldBreak', 200)) return
-    noise({ duration: 0.25, volume: 0.25, from: 1600, to: 200, q: 1 })
-    tone(220, { type: 'square', duration: 0.18, volume: 0.1, slideTo: 70 })
+    impact(1, { thump: 110, crack: 3500, flesh: 900 })
+    for (let i = 0; i < 5; i += 1) noise({ at: 0.02 + i * 0.035, duration: 0.04, volume: 0.14, from: 1800 + Math.random() * 1500, to: 500, q: 3 })
+    ring(0.9, 380, 0.03)
   },
+  /** A critical hit: a heavier blow with a sharp, bright crack. */
   crit(level = 1) {
     if (!ready('crit', 60)) return
-    tone(1900, { type: 'square', duration: 0.05, volume: 0.06 * level, slideTo: 2600 })
-    noise({ duration: 0.08, volume: 0.18 * level, from: 4000, to: 1500, q: 1.5 })
+    impact(level, { thump: 120, crack: 5200, flesh: 1100 })
+    ring(level, 900)
   },
   smash(level = 1) {
     if (!ready('smash', 120)) return

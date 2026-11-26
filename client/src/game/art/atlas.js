@@ -487,6 +487,89 @@ const TILES = {
     p.noise('#3a2a1a', 0.1)
     for (let y = 5; y < 11; y += 1) for (let x = 5; x < 11; x += 1) p.put(x, y, hex('#ffd774'))
   },
+  torch: (p) => {
+    // A stick with a flame on top.
+    p.clear()
+    for (let y = 6; y < T; y += 1) {
+      p.put(7, y, hex(y % 3 ? '#8a5a2b' : '#6b4420'))
+      p.put(8, y, hex('#a8703a'))
+    }
+    for (const [x, y, c] of [[7, 5, '#ffd23b'], [8, 5, '#ffd23b'], [7, 4, '#ffb347'], [8, 4, '#fff3b0'], [7, 3, '#ff8a1a'], [8, 3, '#ffd23b'], [8, 2, '#ff8a1a'], [7, 2, '#d8431a'], [6, 4, '#ff8a1a'], [9, 4, '#ff8a1a']]) p.put(x, y, hex(c))
+  },
+  campfire: (p) => {
+    // Crossed logs, flames licking up from them.
+    p.clear()
+    for (let x = 1; x < 15; x += 1) {
+      p.put(x, 14, hex(x % 4 ? '#6b4420' : '#4a2f16'))
+      p.put(x, 15, hex('#4a2f16'))
+      p.put(x, 12, hex(x % 3 ? '#8a5a2b' : '#6b4420'))
+    }
+    for (let k = 0; k < 5; k += 1) {
+      const x0 = 3 + k * 2.2
+      const h = 5 + Math.floor(p.rng() * 6)
+      for (let y = 0; y < h; y += 1) {
+        const t = y / h
+        const c = t < 0.3 ? '#fff3b0' : t < 0.6 ? '#ffd23b' : t < 0.85 ? '#ff8a1a' : '#d8431a'
+        p.put(Math.round(x0) + Math.round(Math.sin(t * 3 + k) * t), 11 - y, p.vary(hex(c), 0.1))
+      }
+    }
+  },
+  berry_bush: (p) => {
+    // A leafy bush dotted with glowing blue-green berries.
+    p.clear()
+    for (let y = 3; y < T; y += 1) {
+      for (let x = 1; x < 15; x += 1) {
+        const d = Math.hypot(x - 7.5, (y - 10) * 1.2)
+        if (d < 7 && p.rng() < 0.9 - d * 0.05) p.put(x, y, p.vary(hex(y > 12 ? '#2f7a2a' : '#3f9a35'), 0.2))
+      }
+    }
+    for (const [x, y] of [[4, 6], [10, 5], [7, 8], [12, 9], [3, 10], [9, 11], [6, 13], [11, 13]]) {
+      p.put(x, y, hex('#7dffd9'))
+      p.put(x + 1, y, hex('#36c9a0'))
+      p.put(x, y + 1, hex('#36c9a0'))
+    }
+  },
+  chest_top: (p) => {
+    // Oak boards in a dark frame.
+    p.noise('#b07a3c', 0.12)
+    const frame = hex('#4a2f16')
+    for (let i = 0; i < T; i += 1) {
+      p.put(i, 0, frame)
+      p.put(i, 15, frame)
+      p.put(0, i, frame)
+      p.put(15, i, frame)
+    }
+    for (let x = 1; x < 15; x += 1) for (const y of [5, 10]) p.put(x, y, hex('#8a5a2b'))
+  },
+  chest_side: (p) => {
+    // Boards, a dark frame, the lid's seam and a gold latch.
+    p.noise('#a8703a', 0.12)
+    const frame = hex('#4a2f16')
+    for (let i = 0; i < T; i += 1) {
+      p.put(i, 0, frame)
+      p.put(i, 15, frame)
+      p.put(0, i, frame)
+      p.put(15, i, frame)
+      p.put(i, 5, frame)
+    }
+    for (let x = 1; x < 15; x += 1) p.put(x, 11, hex('#8a5a2b'))
+    for (let y = 4; y <= 8; y += 1) for (let x = 7; x <= 8; x += 1) p.put(x, y, hex(y === 4 || y === 8 ? '#a8700f' : '#ffd23b'))
+  },
+  fire: (p) => {
+    // Tongues of flame, white-hot at the base, licking up to dark orange tips.
+    p.clear()
+    for (let k = 0; k < 6; k += 1) {
+      const x0 = 1 + k * 2.6
+      const h = 7 + Math.floor(p.rng() * 8)
+      for (let y = 0; y < h; y += 1) {
+        const t = y / h
+        const w = Math.max(1, Math.round((1 - t) * 2.2))
+        const lean = Math.round(Math.sin(t * 3 + k) * 1.2 * t)
+        const c = t < 0.25 ? '#fff3b0' : t < 0.5 ? '#ffd23b' : t < 0.78 ? '#ff8a1a' : '#d8431a'
+        for (let dx = 0; dx < w; dx += 1) p.put(Math.round(x0) + dx + lean, 15 - y, p.vary(hex(c), 0.12))
+      }
+    }
+  },
   tall_grass: (p) => {
     p.clear()
     const g = hex('#5cb83c')

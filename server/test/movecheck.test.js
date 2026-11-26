@@ -76,7 +76,7 @@ test('movement checks catch speed hacks, flying and walking through walls', () =
 test('the host puts a cheating player back and ignores their stale reports', () => {
   let t = 1_000_000
   const sent = []
-  const host = new GameHost({ send: (cid, type, payload) => sent.push({ type, payload }), now: () => t, random: mulberry32(3), log: () => {} })
+  const host = new GameHost({ duelBots: true, send: (cid, type, payload) => sent.push({ type, payload }), now: () => t, random: mulberry32(3), log: () => {} })
   host.join('p1', 'Runner')
   host.message('p1', 'queue', { mode: 'sword' })
   for (let i = 0; i < DUEL.soloBotMs + DUEL.voteMs + DUEL.countdownMs + 2000; i += 50) {

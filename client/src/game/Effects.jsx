@@ -16,6 +16,7 @@ import {
 import { PROJECTILES } from '@shared/balance'
 import { isSolidBlock } from '@shared/voxel'
 
+import { sfx } from '../audio/sfx'
 import { getQuality } from '../store/quality'
 import { blockColor } from './art/atlas'
 import { killFxBurst } from './art/killfx'
@@ -44,6 +45,18 @@ const col = new Color()
 /** Pool of particle state, parallel to the instanced mesh. */
 function makeParticles() {
   return Array.from({ length: MAX_PARTICLES }, () => ({ life: 0, max: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, s: 0.1, g: 18, r: 1, gc: 1, b: 1 }))
+}
+
+let lastFlames = 0
+let lastBeat = 0
+let lastCrackle = 0
+let lastBubble = 0
+let burnEl = null
+let lastBurn = false
+/** Whether you're on fire right now (the host's `me.effects.burn`, counted down here). */
+function selfBurning(now) {
+  const left = runtime.me.effects?.burn
+  return Boolean(left && runtime.me.alive !== false && now - (runtime.me.effectsAt || 0) < left)
 }
 
 export default function Effects() {
@@ -224,9 +237,21 @@ export default function Effects() {
           break
         case 'proj': {
           const slot = P.projs.find((p) => !p.alive) || P.projs[0]
-          Object.assign(slot, { id: fx.id, kind: fx.kind, x: fx.x, y: fx.y, z: fx.z, vx: fx.vx, vy: fx.vy, vz: fx.vz, alive: true, stuck: 0 })
+          Object.assign(slot, { id: fx.id, kind: fx.kind, x: fx.x, y: fx.y, z: fx.z, vx: fx.vx, vy: fx.vy, vz: fx.vz, alive: true, stuck: 0, fire: Boolean(fx.fire) })
           break
         }
+        case 'chest':
+          spawn(fx.x, fx.y, fx.z, [1, 0.85, 0.3], 22, 3.5, 0.12, 0.8, 4)
+          flash(fx.x, fx.y, fx.z, 1.4, '#ffe27a')
+          break
+        case 'ignite':
+          spawn(fx.x, fx.y + 0.3, fx.z, [1, 0.55, 0.12], 18, 3, 0.14, 0.7, -4)
+          flash(fx.x, fx.y + 0.4, fx.z, 1.6, '#ff8a1a')
+          break
+        case 'douse':
+          spawn(fx.x, fx.y, fx.z, [0.35, 0.6, 1], 20, 3.5, 0.11, 0.7, 10)
+          spawn(fx.x, fx.y + 0.4, fx.z, [0.85, 0.88, 0.92], 8, 1.2, 0.2, 0.9, -3)
+          break
         case 'projEnd': {
           const p = P.projs.find((s) => s.alive && s.id === fx.id)
           if (p) {
@@ -305,6 +330,42 @@ export default function Effects() {
       if (P.pops.instanceColor) P.pops.instanceColor.needsUpdate = true
     }
 
+    // People on fire: flames rising off them (you too, seen from outside).
+    if (q.particles && now - lastFlames > 90) {
+      lastFlames = now
+      for (const r of runtime.remotes.values()) if (r.burning) spawn(r.x, r.y + 0.9, r.z, [1, 0.5 + Math.random() * 0.2, 0.1], 2, 1, 0.09, 0.4, -4)
+      if (selfBurning(now) && runtime.camera.mode === 'third') {
+        const b = runtime.player.body
+        spawn(b.x, b.y + 0.9, b.z, [1, 0.55, 0.1], 2, 1, 0.09, 0.4, -4)
+      }
+    }
+    // Sounds of your state: a heartbeat when you're low, crackling while you burn,
+    // bubbles when you're running out of air.
+    const me = runtime.me
+    if (runtime.zone === 'match' && me.alive !== false) {
+      if (me.hp > 0 && me.hp <= 6 && now - lastBeat > (me.hp <= 3 ? 650 : 950)) {
+        lastBeat = now
+        sfx.heartbeat(me.hp <= 3 ? 1 : 0.7)
+      }
+      if (selfBurning(now) && now - lastCrackle > 300) {
+        lastCrackle = now
+        sfx.crackle()
+      }
+      if (me.air !== undefined && me.air < 10 && now - lastBubble > 600) {
+        lastBubble = now
+        sfx.bubble(me.air <= 2 ? 1 : 0.6)
+      }
+    }
+    // On fire yourself: the edges of the screen burn (every preset).
+    burnEl ||= document.getElementById('burn-vignette')
+    if (burnEl) {
+      const on = selfBurning(now)
+      if (on !== lastBurn) {
+        lastBurn = on
+        burnEl.classList.toggle('on', on)
+      }
+    }
+
     // Projectiles: same arc as the host simulates.
     P.projs.forEach((p, i) => {
       const mesh = P.projMeshes[i]
@@ -332,10 +393,12 @@ export default function Effects() {
       }
       mesh.visible = p.alive
       mesh.position.set(p.x, p.y, p.z)
+      // A fire arrow trails sparks.
+      if (p.alive && p.fire && !p.stuck) spawn(p.x, p.y, p.z, [1, 0.5, 0.1], 1, 0.4, 0.1, 0.35, -1)
       if (p.kind === 'arrow') {
         mesh.scale.set(0.06, 0.06, 0.7)
         if (!p.stuck) mesh.lookAt(p.x + p.vx, p.y + p.vy, p.z + p.vz)
-        mesh.material.color.set('#c9b48a')
+        mesh.material.color.set(p.fire ? '#ff8a1a' : '#c9b48a')
       } else {
         mesh.scale.setScalar(p.kind === 'gust' ? 0.36 : 0.25)
         mesh.rotation.set(now / 120, now / 90, 0)

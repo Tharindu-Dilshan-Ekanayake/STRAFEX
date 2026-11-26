@@ -6,10 +6,10 @@ import { getSDK, safeCall } from './sdk'
  */
 
 /**
- * The game slug from the Boxity developer dashboard: `lucky-islands`. The deploy
+ * The game slug from the Boxity developer dashboard: `strafex`. The deploy
  * workflow passes it as VITE_GAME_SLUG; local builds fall back to it.
  */
-export const GAME_SLUG = import.meta.env.VITE_GAME_SLUG || 'lucky-islands'
+export const GAME_SLUG = import.meta.env.VITE_GAME_SLUG || 'strafex'
 
 const GUEST_KEY = 'pp.guestId'
 

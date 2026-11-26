@@ -12,7 +12,8 @@ import { activePlayers, liveRooms } from '../registry.js'
 import { GameState, PlayerState } from './schema.js'
 
 /** One server: a shared lobby, many duels at once, and Spirelands. */
-const MAX_CLIENTS = 50
+/** Players per server (room). Full, and Legion's matchmaker starts another server. */
+const MAX_CLIENTS = 30
 const RECONNECT_SECONDS = 20
 const AUTOSAVE_MS = 30_000
 /** The simulation: duels, Spirelands, bots, projectiles (GameHost). */
@@ -25,7 +26,7 @@ const POD = process.env.POD_NAME || `local-${process.pid}`
 const GEMS_CHECK_MS = 2000
 
 /** Game messages the host handles; everything else is a lobby/profile action. */
-const HOST_MESSAGES = new Set(['pos', 'sel', 'dig', 'break', 'place', 'attack', 'use', 'block', 'swing', 'lobby', 'look', 'qc', 'queue', 'unqueue', 'voteMap', 'requeue', 'ffa', 'kit', 'parkour', 'swap', 'swapHands'])
+const HOST_MESSAGES = new Set(['pos', 'sel', 'dig', 'break', 'place', 'attack', 'use', 'block', 'swing', 'lobby', 'look', 'qc', 'queue', 'unqueue', 'voteMap', 'requeue', 'ffa', 'kit', 'parkour', 'swap', 'swapHands', 'craft', 'loot'])
 /** Profile actions the session handles. */
 const SESSION_MESSAGES = new Set(['openCase', 'equip', 'claimDaily', 'welcomeGift', 'tutorialDone'])
 
@@ -41,7 +42,7 @@ const cleanName = (name) =>
     .slice(0, 20) || 'Player'
 
 /**
- * One server: up to 50 players sharing a lobby, the duel queues, every duel in progress
+ * One server: up to 30 players sharing a lobby, the duel queues, every duel in progress
  * and Spirelands. The game itself runs in GameHost (shared with the offline game); this
  * room adds networking, identity, saves, Boxity rewards, and the small synced state the
  * platform reads (who's here).

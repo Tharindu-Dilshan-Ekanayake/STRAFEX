@@ -86,7 +86,7 @@ test('your level shows to everyone, and a duel against a bot pays out through th
   let t = NOW
   const sent = []
   const rewards = []
-  const host = new GameHost({ send: (cid, type, payload) => sent.push({ cid, type, payload }), onReward: (cid, r) => rewards.push(r), now: () => t, random: mulberry32(9), log: () => {} })
+  const host = new GameHost({ duelBots: true, send: (cid, type, payload) => sent.push({ cid, type, payload }), onReward: (cid, r) => rewards.push(r), now: () => t, random: mulberry32(9), log: () => {} })
   const profile = createProfile('p', 'Lvl')
   profile.level = 7
   const session = new PlayerSession(profile, { now: t, emit: () => {} })
