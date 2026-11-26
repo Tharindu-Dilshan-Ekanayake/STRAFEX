@@ -40,7 +40,7 @@ import {
  * the cape). The rig faces +Z; the parent turns it to face the game's way.
  * While `activeRef.current` is false (not on screen) the pose isn't updated at all.
  */
-export default function BloxityAvatar({ equipped, proportions, motionRef, handRef, backRef, activeRef, onReady, local = false, targetHeight = 1.8 }) {
+export default function BloxityAvatar({ equipped, proportions, motionRef, handRef, offHandRef, backRef, activeRef, onReady, local = false, targetHeight = 1.8 }) {
   const { scene: baseScene } = useLoader(GLTFLoader, baseBodyUrl())
   const [assembled, setAssembled] = useState(false)
   const bodyRef = useRef(null)
@@ -197,6 +197,7 @@ export default function BloxityAvatar({ equipped, proportions, motionRef, handRe
       if (motionRef?.current) animateRig(rig, motionRef.current, 1 / fit.scale)
       placeFollowers(rig)
       if (handRef?.current) placeHand(rig, handRef.current)
+      if (offHandRef?.current) placeHand(rig, offHandRef.current, true)
       // The cape hangs from the base of the head (Neck1 sits at the shoulders).
       if (backRef?.current) placeAtBone(rig, 'Neck1', backRef.current) || placeAtBone(rig, 'Spine2', backRef.current)
     } catch {

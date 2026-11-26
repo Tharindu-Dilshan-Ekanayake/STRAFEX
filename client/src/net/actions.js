@@ -22,14 +22,21 @@ export const actions = {
   claimDaily: () => send('claimDaily'),
   welcomeGift: () => send('welcomeGift'),
   tutorialDone: () => send('tutorialDone'),
-  vote: (mode) => send('vote', { mode }),
   quickChat: (i) => send('qc', { i }),
+  /** Into the queue for a duel mode (a bot steps in if nobody else is waiting). */
+  queue: (mode) => send('queue', { mode }),
+  unqueue: () => send('unqueue'),
   voteMap: (map) => send('voteMap', { map }),
-  voteBots: (level) => send('voteBots', { level }),
-  afk: (on) => send('afk', { on }),
-  spectate: () => send('spectate'),
-  joinRound: () => send('joinRound'),
+  /** After a duel: straight back into the same queue. */
+  requeue: () => send('requeue'),
+  /** Into Spirelands, then pick a kit to spawn with. */
+  ffa: () => send('ffa'),
+  kit: (mode) => send('kit', { mode }),
   toLobby: () => send('lobby'),
+  /** Swap two inventory slots (0-8 hotbar, 9-35 bag, 36 offhand). */
+  swap: (a, b) => send('swap', { a, b }),
+  /** The held item and the offhand trade places. */
+  swapHands: () => send('swapHands'),
   select: (slot) => send('sel', { slot }),
   /** A rewarded ad Boxity says was watched; the server verifies the token. */
   adReward: (placement, rewardToken) => send('adReward', { placement, rewardToken }),

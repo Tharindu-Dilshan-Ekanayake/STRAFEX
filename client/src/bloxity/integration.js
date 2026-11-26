@@ -1,6 +1,6 @@
 import { setAdBreakMuted, setMasterVolume, setMusicVolume } from '../audio/sfx'
 import { respawn, runtime } from '../game/runtime'
-import { getGame, useGame, voteOnScreen } from '../store/game'
+import { getGame, useGame } from '../store/game'
 import { QUALITY_LEVELS, useQuality } from '../store/quality'
 import { handleChatMessage } from './chat'
 import { safeCall, toUnsubscribe } from './sdk'
@@ -172,11 +172,10 @@ function installLifecycle(sdk) {
   }
   /**
    * Screen ads only around a popup (a panel) opened in the lobby; never while playing:
-   * not in a round (even with a panel open there), not with no popup open, and not while
-   * the mode or map vote is up (from the mode vote through the map vote, even if a panel
-   * is opened over it).
+   * not in a duel or Spirelands (even with a panel open there), not with no popup open,
+   * not while you're queued (a match could start any moment) or voting for a duel's map.
    */
-  const adsAllowed = (state) => !!state.panel && state.zone === 'lobby' && !voteOnScreen(state.phase, state.zone)
+  const adsAllowed = (state) => !!state.panel && state.zone === 'lobby' && state.phase.kind === 'lobby' && !state.phase.queue
   const sync = (state) => {
     if (!state.playable) return
     start()

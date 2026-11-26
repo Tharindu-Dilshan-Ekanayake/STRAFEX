@@ -1,5 +1,5 @@
 import { ITEMS, MODES, REWARDS } from '@shared/balance'
-import { MAPS } from '@shared/maps'
+import { DUEL_MAPS } from '@shared/maps'
 
 import { sfx } from '../audio/sfx'
 import { itemModel } from '../game/art/items'
@@ -23,8 +23,13 @@ const dist = (x, y, z) => {
 }
 /** 1 close by, fading to 0 at 40 blocks: loudness of something happening at (x, y, z). */
 const near = (x, y, z) => Math.max(0, 1 - dist(x, y, z) / 40)
+/** Where an entity is (us or someone else), or null. */
+function where(eid) {
+  if (eid === runtime.eid) return runtime.player.body
+  return runtime.remotes.get(eid) || null
+}
 
-let lastPhase = 'waiting'
+let lastPhaseKey = ''
 let streak = 0
 let lastKillAt = 0
 
@@ -44,6 +49,8 @@ function setZone(zone) {
 
 function teleport({ x, y, z, yaw, zone }) {
   if (zone) {
+    // Back in the fight (a new round, or a fresh Spirelands life): the knockout card goes.
+    if (zone === 'match' && runtime.zone !== 'match') getGame().setResult(null)
     setZone(zone)
     if (zone === 'lobby' && (worldState.kind !== 'lobby' || !worldState.world)) enterLobby()
   }
@@ -82,46 +89,51 @@ export function handleServerEvent(type, p = {}) {
       return
     }
     case 'phase': {
-      const phase = { ...p, endsAt: performance.now() + p.left, stageEndsAt: performance.now() + (p.stageLeft || 0) }
-      game.setPhase(phase)
-      runtime.lava.active = p.phase === 'fight'
-      runtime.teamSize = p.teamSize || 1
-      runtime.lava.mode = p.mode || 'classic'
-      if (p.phase === 'fight') runtime.lava.fightStart = performance.now() - p.elapsed
-      if (p.phase !== lastPhase) {
-        if (p.phase === 'fight' && lastPhase === 'cages' && runtime.zone === 'match') {
-          sfx.cagesOpen()
-          game.showToast(t('GO! Break your lucky blocks!'), 'success')
+      const now = performance.now()
+      game.setPhase({ ...p, endsAt: now + (p.left || 0), queuedSince: now - (p.queuedMs || 0) })
+      // Phase changes worth a sound or a banner.
+      const key = `${p.kind}:${p.phase}:${p.round || 0}`
+      if (key !== lastPhaseKey) {
+        if (p.kind === 'duel' && p.phase === 'fight') {
+          sfx.go()
+          game.setBanner({ text: t('FIGHT'), sub: t('Good luck!'), color: 'green' })
         }
-        if (p.phase === 'cages' && runtime.zone === 'match') {
+        if (p.kind === 'duel' && p.phase === 'countdown') {
           game.setResult(null)
-          game.setRoundReward(null)
-          game.showToast(t('{mode} on {map}!', { mode: t(MODES[p.mode]?.name || 'Solo'), map: t(MAPS[p.map]?.name || 'the islands') }), 'info')
+          game.setDuelOver(null)
+          const ft = MODES[p.mode]?.ft || 1
+          game.setBanner({ text: t('ROUND {n}', { n: p.round }), sub: t('{mode} · first to {ft} · {map}', { mode: MODES[p.mode]?.name || '', ft, map: DUEL_MAPS[p.map]?.name || '' }), color: 'gold' })
         }
-        if (p.phase === 'intermission' && lastPhase !== 'intermission') sfx.tick()
-        lastPhase = p.phase
+        if (p.kind === 'duel' && p.phase === 'vote' && !lastPhaseKey.startsWith('duel:vote')) {
+          sfx.reward()
+          game.closePanel()
+        }
+        if (p.kind === 'lobby' && lastPhaseKey && !lastPhaseKey.startsWith('lobby')) game.setBanner(null)
+        lastPhaseKey = key
       }
       return
     }
     case 'match':
       enterMatch(p)
-      runtime.lava.y = 6
-      // Into a round: whatever lobby screen was up goes away.
+      // Into a game: whatever lobby screen was up goes away.
       game.closePanel()
       game.setCaseOpen(null)
+      game.setResult(null)
       return
     case 'lobby':
       setZone('lobby')
       enterLobby()
+      if (game.panel === 'inventory') game.closePanel()
       game.setResult(null)
       game.setSpectating(null)
+      game.setDuelOver(null)
+      game.setBanner(null)
       return
     case 'tp':
       teleport(p)
       return
     case 'edits': {
       const changed = applyEdits(p.e)
-      // Blocks others broke near you: a crumble and a few chips.
       let pops = 0
       for (const c of changed) {
         if (c.id === 0 && c.before && near(c.x, c.y, c.z) > 0) pushFx({ type: 'break', x: c.x, y: c.y, z: c.z, id: c.before, quiet: true })
@@ -134,11 +146,10 @@ export function handleServerEvent(type, p = {}) {
     }
     case 'me': {
       const prev = runtime.me
-      runtime.me = { ...p, effectsAt: performance.now() }
+      const now = performance.now()
+      runtime.me = { ...p, effectsAt: now, shieldOffAt: now }
       game.setMe(p)
       if (p.zone && p.zone !== runtime.zone && p.zone !== 'lobby') setZone(p.zone)
-      // Tutorial: holding blocks after the first lucky block.
-      if (game.tutorial === 1 && p.inv[p.sel] && ITEMS[p.inv[p.sel].id]?.kind === 'block') game.setTutorial(2)
       if (prev.hp > p.hp && p.alive) runtime.camera.hurtTilt = 1
       // Building and the stack ran out: carry on with the next stack of blocks.
       const was = prev.inv?.[prev.sel]
@@ -149,25 +160,71 @@ export function handleServerEvent(type, p = {}) {
       return
     }
     case 'hurt': {
+      const at = where(p.eid)
       if (p.eid === runtime.eid) {
         sfx.hurt()
         runtime.camera.hurtTilt = 1
-        runtime.camera.shake = Math.max(runtime.camera.shake, 0.25)
+        runtime.camera.shake = Math.max(runtime.camera.shake, 0.22)
         pushFx({ type: 'hurtFlash' })
       } else {
         const r = runtime.remotes.get(p.eid)
         if (r) {
-          r.hurtAt = performance.now()
-          pushFx({ type: 'hit', x: r.x, y: r.y + 1.2, z: r.z })
+          const now = performance.now()
+          // Our own hit was already shown when we swung (Player.jsx): just the number now.
+          const shown = p.by === runtime.eid && now - runtime.predictedHitAt < 450
+          r.hurtAt = Math.max(r.hurtAt, shown ? r.hurtAt : now)
+          if (!shown) pushFx({ type: 'hit', x: r.x, y: r.y + 1.2, z: r.z })
           if (p.by === runtime.eid) {
-            sfx.hit()
+            if (!shown) sfx.hit()
             showHit(p.dmg)
-            if (game.tutorial === 3) game.setTutorial(4)
           } else sfx.hit(near(r.x, r.y, r.z) * 0.6)
         }
       }
+      if (p.crit && at) {
+        pushFx({ type: 'crit', x: at.x, y: at.y + 1.1, z: at.z })
+        sfx.crit(Math.max(0.3, near(at.x, at.y, at.z)))
+      }
       return
     }
+    case 'blocked': {
+      const at = where(p.eid)
+      if (at) {
+        pushFx({ type: 'blocked', x: at.x, y: at.y + 1.1, z: at.z })
+        sfx.block(Math.max(0.3, near(at.x, at.y, at.z)))
+      }
+      return
+    }
+    case 'shieldOff': {
+      const at = where(p.eid)
+      if (at) sfx.shieldBreak()
+      if (p.eid === runtime.eid) {
+        runtime.blocking = false
+        game.showToast(t('Your shield is down!'), 'error')
+      }
+      return
+    }
+    case 'charm': {
+      pushFx({ type: 'charm', x: p.x, y: p.y + 1, z: p.z })
+      sfx.charm()
+      if (p.eid === runtime.eid) game.showToast(t('Revive Charm used!'), 'success')
+      return
+    }
+    case 'smash':
+      pushFx({ type: 'smash', x: p.x, y: p.y, z: p.z, big: p.big })
+      sfx.smash(Math.max(0.3, near(p.x, p.y, p.z)))
+      runtime.camera.shake = Math.max(runtime.camera.shake, near(p.x, p.y, p.z) * (p.big ? 0.7 : 0.4))
+      return
+    case 'kfx':
+      pushFx({ type: 'kfx', x: p.x, y: p.y, z: p.z, fx: p.fx })
+      return
+    case 'gust':
+      pushFx({ type: 'gust', x: p.x, y: p.y, z: p.z })
+      sfx.gust(Math.max(0.25, near(p.x, p.y, p.z)))
+      return
+    case 'splash':
+      pushFx({ type: 'splash', x: p.x, y: p.y, z: p.z, color: p.color })
+      sfx.splash(Math.max(0.25, near(p.x, p.y, p.z)))
+      return
     case 'kb': {
       const b = runtime.player.body
       b.pushX += p.x
@@ -182,7 +239,6 @@ export function handleServerEvent(type, p = {}) {
       return
     }
     case 'act': {
-      // Another player mining, eating, drinking or throwing.
       const r = runtime.remotes.get(p.eid)
       if (!r) return
       const now = performance.now()
@@ -191,26 +247,17 @@ export function handleServerEvent(type, p = {}) {
         return
       }
       r.swingAt = now
-      if (p.kind === 'food' || p.kind === 'potion' || p.kind === 'heart') {
+      if (p.kind === 'lunge') {
+        pushFx({ type: 'gust', x: r.x, y: r.y + 0.6, z: r.z, small: true })
+        sfx.lunge()
+        return
+      }
+      if (p.kind === 'food' || p.kind === 'potion') {
         pushFx({ type: 'use', kind: p.kind, x: r.x, y: r.y + 1.5, z: r.z })
         if (near(r.x, r.y, r.z) > 0.2) (p.kind === 'potion' ? sfx.drink : sfx.eat)()
       }
       return
     }
-    case 'loot':
-      game.setLoot(p)
-      if (p.bad) sfx.unlucky()
-      else sfx.lucky(p.rare)
-      if (game.tutorial === 0) game.setTutorial(1)
-      return
-    case 'pop':
-      pushFx({ type: 'pop', x: p.x, y: p.y, z: p.z, rare: p.rare, bad: p.bad })
-      if (near(p.x, p.y, p.z) > 0.3 && dist(p.x, p.y, p.z) > 4) sfx.pop(near(p.x, p.y, p.z))
-      return
-    case 'tnt':
-      pushFx({ type: 'tnt', x: p.x, y: p.y, z: p.z, fuse: p.fuse })
-      if (near(p.x, p.y, p.z) > 0) sfx.fuse(near(p.x, p.y, p.z))
-      return
     case 'boom': {
       pushFx({ type: 'boom', x: p.x, y: p.y, z: p.z, r: p.r })
       const k = near(p.x, p.y, p.z)
@@ -218,10 +265,6 @@ export function handleServerEvent(type, p = {}) {
       runtime.camera.shake = Math.max(runtime.camera.shake, k * 0.9)
       return
     }
-    case 'bolt':
-      pushFx({ type: 'bolt', x: p.x, y: p.y, z: p.z })
-      sfx.zap(Math.max(0.3, near(p.x, p.y, p.z)))
-      return
     case 'proj':
       pushFx({ type: 'proj', ...p })
       if (p.owner !== runtime.eid && near(p.x, p.y, p.z) > 0.4) sfx.throw(near(p.x, p.y, p.z) * 0.7)
@@ -234,7 +277,7 @@ export function handleServerEvent(type, p = {}) {
       if (!item) return
       runtime.useAnimUntil = performance.now() + 350
       if (item.kind === 'food') sfx.eat()
-      else if (item.kind === 'potion' || item.kind === 'heart') sfx.drink()
+      else if (item.kind === 'potion') sfx.drink()
       else if (item.kind === 'bow') sfx.bow()
       else sfx.throw(1)
       return
@@ -244,28 +287,42 @@ export function handleServerEvent(type, p = {}) {
       return
     case 'killed': {
       sfx.kill()
-      // Streaks: kills within a few seconds of each other.
       const now = performance.now()
-      streak = now - lastKillAt < 6000 ? streak + 1 : 1
+      streak = now - lastKillAt < 8000 ? streak + 1 : 1
       lastKillAt = now
       const names = { 2: 'DOUBLE KILL!', 3: 'TRIPLE KILL!' }
-      game.setKillBanner({ name: p.name, streak: streak >= 4 ? 'UNSTOPPABLE!' : names[streak] || null, cash: REWARDS.kill })
+      game.setKillBanner({ name: p.name, streak: streak >= 4 ? 'UNSTOPPABLE!' : names[streak] || null, cash: p.cash ? REWARDS.kill : 0 })
       return
     }
     case 'dead':
       sfx.death()
       setZone('spec')
-      game.setResult({ kind: 'dead', by: p.by, how: p.how, placement: p.placement })
+      if (game.panel === 'inventory') game.closePanel()
+      runtime.blocking = false
+      game.setResult({ kind: 'dead', by: p.by, how: p.how, mode: p.kind })
       return
-    case 'win': {
-      const me = p.eid === runtime.eid || (p.team >= 0 && p.team === runtime.myTeam)
-      if (me) sfx.win()
-      if (runtime.zone === 'match' || runtime.zone === 'spec') {
-        const prev = game.result
-        game.setResult({ kind: me ? 'win' : 'over', winner: p.name, placement: prev?.placement })
-      }
+    case 'roundEnd': {
+      const mine = p.winner === runtime.eid
+      game.setBanner({
+        text: p.winner ? (mine ? t('ROUND WON') : t('{name} wins the round', { name: p.name })) : t('DRAW'),
+        sub: p.score.map((s) => `${s.name} ${s.wins}`).join('  -  '),
+        color: p.winner ? (mine ? 'green' : 'red') : 'gold',
+      })
+      if (mine) sfx.reward()
       return
     }
+    case 'duelEnd': {
+      const win = p.winner === runtime.eid
+      if (win) sfx.win()
+      else sfx.death()
+      game.setBanner(null)
+      game.setResult(null)
+      game.setDuelOver({ win, winner: p.name, score: p.score, forfeit: p.forfeit, mode: p.mode })
+      return
+    }
+    case 'duelStats':
+      game.setDuelStats(p)
+      return
     case 'qc': {
       const text = showQuickChat(p.eid, p.i)
       if (text) {

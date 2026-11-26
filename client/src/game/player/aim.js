@@ -1,8 +1,10 @@
-import { ITEMS, MELEE_REACH, REACH } from '@shared/balance'
+import { ITEMS, MELEE_REACH, OFFHAND, REACH } from '@shared/balance'
+import { ARENA_BUILD_HEIGHT, ARENA_FLOOR } from '@shared/maps'
 import { cellOverlapsBody, PLAYER } from '@shared/physics'
 import { B, BLOCKS, raycastVoxels, rayBox } from '@shared/voxel'
 
 import { runtime } from '../runtime'
+import { worldState } from '../world'
 
 /** What the crosshair is on, and where a held block would go (the ghost box), bridging included. */
 
@@ -10,6 +12,27 @@ import { runtime } from '../runtime'
 export function heldId() {
   const slot = runtime.me.inv?.[runtime.me.sel]
   return slot ? slot.id : 'fist'
+}
+
+/** What's in your left hand ('fist' for nothing). */
+export function offId() {
+  const slot = runtime.me.inv?.[OFFHAND]
+  return slot ? slot.id : 'fist'
+}
+
+/** Things right click does something with. */
+const USABLE = new Set(['block', 'crystal', 'food', 'potion', 'throw', 'splash', 'bow', 'spear'])
+
+/**
+ * What right click uses, like the classic games: the right hand if it holds something
+ * usable, else the left hand's item. `{ id, hand: 'main' | 'off' }`.
+ */
+export function rightClickTarget() {
+  const main = heldId()
+  if (USABLE.has(ITEMS[main]?.kind)) return { id: main, hand: 'main' }
+  const off = offId()
+  if (USABLE.has(ITEMS[off]?.kind) && ITEMS[off].kind !== 'bow' && ITEMS[off].kind !== 'spear') return { id: off, hand: 'off' }
+  return { id: main, hand: 'main' }
 }
 
 export function aim(world, ex, ey, ez, dx, dy, dz, target) {
@@ -26,11 +49,10 @@ export function aim(world, ex, ey, ez, dx, dy, dz, target) {
     target.id = hit.id
     target.dist = hit.dist
   }
+  const reach = (ITEMS[heldId()]?.reach || MELEE_REACH) + 0.2
   for (const r of runtime.remotes.values()) {
-    // Teammates aren't targets: your swing goes through to the block behind them.
-    if (runtime.teamSize > 1 && r.team === runtime.myTeam) continue
     const t = rayBox(ex, ey, ez, dx, dy, dz, r.x - 0.35, r.y, r.z - 0.35, r.x + 0.35, r.y + PLAYER.height, r.z + 0.35)
-    if (t >= 0 && t <= MELEE_REACH + 0.2 && t < best) {
+    if (t >= 0 && t <= reach && t < best) {
       best = t
       target.kind = 'ent'
       target.eid = r.eid
@@ -42,8 +64,9 @@ export function aim(world, ex, ey, ez, dx, dy, dz, target) {
 /** Can a block go in cell (x, y, z) right now (free, touching a block, not in anyone)? */
 function placeable(world, b, x, y, z) {
   if (!world.inBounds(x, y, z) || y < 1 || y >= world.sy - 1) return false
+  if (worldState.arena === 'duel' && y > ARENA_FLOOR + ARENA_BUILD_HEIGHT) return false
   const here = world.get(x, y, z)
-  if (here !== B.AIR && BLOCKS[here].render !== 'cross') return false
+  if (here !== B.AIR && BLOCKS[here].render !== 'cross' && here !== B.WATER) return false
   const touching =
     world.isSolid(x + 1, y, z) || world.isSolid(x - 1, y, z) || world.isSolid(x, y + 1, z) || world.isSolid(x, y - 1, z) || world.isSolid(x, y, z + 1) || world.isSolid(x, y, z - 1)
   if (!touching) return false
@@ -55,15 +78,26 @@ function placeable(world, b, x, y, z) {
 /**
  * Where a block would go if you placed one now (`runtime.place`, also drawn as the
  * white preview box): against the face you're aiming at, as usual - or, when you aim
- * past an edge at nothing (over the lava), the free cell in the row under your feet
+ * past an edge at nothing (over the void), the free cell in the row under your feet
  * that is closest to where you're looking. That second rule is what makes bridging
  * easy: look ahead and down past the edge, click, walk on, click.
  */
 export function findPlacement(world, b, eyeY, dx, dy, dz) {
   const pl = runtime.place
   pl.ok = false
-  const kind = ITEMS[heldId()]?.kind
-  if (kind !== 'block' && kind !== 'tnt') return
+  const kind = ITEMS[rightClickTarget().id]?.kind
+  if (kind === 'crystal') {
+    // A blast crystal sits on top of obsidian or corestone, nowhere else.
+    const t = runtime.target
+    if (t.kind !== 'block' || t.ny !== 1 || (t.id !== B.OBSIDIAN && t.id !== B.CORESTONE)) return
+    if (!placeable(world, b, t.x, t.y + 1, t.z)) return
+    pl.x = t.x
+    pl.y = t.y + 1
+    pl.z = t.z
+    pl.ok = true
+    return
+  }
+  if (kind !== 'block') return
   const t = runtime.target
   const fy = Math.floor(b.y - 0.01) - 1
   if (t.kind === 'ent') return

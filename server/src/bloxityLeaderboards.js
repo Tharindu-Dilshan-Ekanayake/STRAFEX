@@ -20,7 +20,7 @@ import { activePlayers } from './registry.js'
 export const BLOXITY_LEADERBOARDS = [
   { id: 'wins', label: 'Wins', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
   { id: 'kills', label: 'Kills', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
-  { id: 'games', label: 'Rounds Played', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
+  { id: 'games', label: 'Duels Played', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
   { id: 'playtime', label: 'Minutes Played', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
 ]
 

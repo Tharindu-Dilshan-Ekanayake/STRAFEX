@@ -205,7 +205,7 @@ const MATERIAL = new Map()
 for (const id of [B.GRASS, B.DIRT, B.LEAVES, B.SAND, B.SNOW_GRASS, B.SNOW, B.PATH, B.FROSTING, B.CANDY_PINK, B.TALL_GRASS, B.FLOWER_RED, B.FLOWER_YELLOW, B.CACTUS]) MATERIAL.set(id, 'soft')
 for (const id of [B.PLANKS, B.LOG, B.TNT]) MATERIAL.set(id, 'wood')
 for (const id of [B.WOOL_WHITE, B.WOOL_RED, B.WOOL_BLUE, B.WOOL_YELLOW]) MATERIAL.set(id, 'cloth')
-for (const id of [B.GLASS, B.ICE, B.CAGE]) MATERIAL.set(id, 'glass')
+for (const id of [B.GLASS, B.ICE, B.CAGE, B.CRYSTAL]) MATERIAL.set(id, 'glass')
 for (const id of [B.LUCKY, B.LUCKY_RARE]) MATERIAL.set(id, 'lucky')
 export const materialOf = (id) => MATERIAL.get(id) || 'stone'
 
@@ -427,6 +427,52 @@ export const sfx = {
   },
   caseTick(pitch = 1) {
     if (ready('caseTick', 25)) tone(1400 * pitch, { type: 'square', duration: 0.025, volume: 0.05 })
+  },
+  /** A hit stopped by a raised shield: a wooden thunk. */
+  block(level = 1) {
+    if (!ready('block', 80)) return
+    noise({ duration: 0.08, volume: 0.22 * level, from: 700, to: 200, q: 2 })
+    tone(140, { type: 'triangle', duration: 0.08, volume: 0.12 * level, slideTo: 90 })
+  },
+  /** An axe knocks a shield down. */
+  shieldBreak() {
+    if (!ready('shieldBreak', 200)) return
+    noise({ duration: 0.25, volume: 0.25, from: 1600, to: 200, q: 1 })
+    tone(220, { type: 'square', duration: 0.18, volume: 0.1, slideTo: 70 })
+  },
+  crit(level = 1) {
+    if (!ready('crit', 60)) return
+    tone(1900, { type: 'square', duration: 0.05, volume: 0.06 * level, slideTo: 2600 })
+    noise({ duration: 0.08, volume: 0.18 * level, from: 4000, to: 1500, q: 1.5 })
+  },
+  smash(level = 1) {
+    if (!ready('smash', 120)) return
+    noise({ duration: 0.45, volume: 0.42 * level, from: 1200, to: 60, q: 0.7, type: 'lowpass' })
+    tone(95, { type: 'sine', duration: 0.35, volume: 0.28 * level, slideTo: 40 })
+  },
+  gust(level = 1) {
+    if (!ready('gust', 80)) return
+    noise({ duration: 0.4, volume: 0.22 * level, from: 400, to: 2600, q: 1.2 })
+    tone(260, { type: 'sine', duration: 0.3, volume: 0.06 * level, slideTo: 620 })
+  },
+  splash(level = 1) {
+    if (!ready('splash', 100)) return
+    for (let i = 0; i < 3; i += 1) tone(2400 + Math.random() * 1500, { at: i * 0.03, type: 'triangle', duration: 0.1, volume: 0.05 * level })
+    noise({ duration: 0.3, volume: 0.16 * level, from: 3000, to: 900, q: 0.8 })
+  },
+  charm() {
+    if (!ready('charm', 400)) return
+    noise({ duration: 0.5, volume: 0.2, from: 5000, to: 900, q: 0.6 })
+    arp(659, [0, 4, 7, 12, 16, 24], { step: 0.05, volume: 0.08 })
+  },
+  /** A jump pad throws you up: a springy boing. */
+  pad() {
+    if (!ready('pad', 150)) return
+    tone(220, { type: 'square', duration: 0.18, volume: 0.07, slideTo: 880 })
+    tone(330, { at: 0.04, type: 'triangle', duration: 0.2, volume: 0.05, slideTo: 1200 })
+  },
+  lunge() {
+    if (ready('lunge', 120)) noise({ duration: 0.22, volume: 0.14, from: 900, to: 3200, q: 2.5 })
   },
   reveal(rarityIndex = 0) {
     if (!ready('reveal', 300)) return

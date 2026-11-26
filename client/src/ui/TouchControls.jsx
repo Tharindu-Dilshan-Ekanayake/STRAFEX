@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { ITEMS } from '@shared/balance'
+import { ITEMS, OFFHAND } from '@shared/balance'
 
 import { runtime } from '../game/runtime'
 import { getGame, useGame } from '../store/game'
@@ -20,22 +20,25 @@ const STICK = 64
 
 
 /** What the use button does with the item in hand. */
-function actionFor(item) {
+function actionFor(item, shield) {
   switch (item?.kind) {
     case 'block':
-    case 'tnt':
+    case 'crystal':
       return { icon: 'cube', label: 'PLACE', color: '58,111,216' }
     case 'food':
       return { icon: 'apple', label: 'EAT', color: '230,140,40' }
     case 'potion':
-    case 'heart':
       return { icon: 'potion', label: 'DRINK', color: '190,80,220' }
     case 'throw':
+    case 'splash':
       return { icon: 'ball', label: 'THROW', color: '70,170,200' }
     case 'bow':
       return { icon: 'bow', label: 'SHOOT', color: '150,100,50' }
+    case 'spear':
+      return { icon: 'ball', label: 'LUNGE', color: '70,170,90' }
     default:
-      return null
+      // Anything else: right click raises the shield, if you have one.
+      return shield ? { icon: 'cube', label: 'BLOCK', color: '120,120,140' } : null
   }
 }
 
@@ -44,6 +47,8 @@ export default function TouchControls() {
   const zone = useGame((s) => s.zone)
   const panel = useGame((s) => s.panel)
   const heldId = useGame((s) => s.me.inv[s.me.sel]?.id)
+  const hasShield = useGame((s) => s.me.inv[OFFHAND]?.id === 'shield' || s.me.inv[s.me.sel]?.id === 'shield')
+  const offItem = useGame((s) => ITEMS[s.me.inv[OFFHAND]?.id])
   const [sneak, setSneak] = useState(false)
   const [held, setHeld] = useState({})
   const stick = useRef({ id: null, ox: 0, oy: 0 })
@@ -139,7 +144,8 @@ export default function TouchControls() {
   })
 
   const item = ITEMS[heldId]
-  const use = actionFor(item)
+  // The use button follows the hand right click would use: the right, else the left.
+  const use = actionFor(item, hasShield) || actionFor(offItem, false)
   const attackIcon = item?.kind === 'sword' ? 'sword' : 'pick'
   const face = (size, rgb, alpha = 0.82) => ({
     width: u(size),
@@ -177,7 +183,7 @@ export default function TouchControls() {
           <>
             <button type="button" className={`tbtn absolute ${held.attack ? 'held' : ''}`} style={{ ...face(96, '216,68,58'), right: u(118), bottom: u(4) }} {...hold('attack')}>
               <GameIcon name={attackIcon} size={36} />
-              {label(item?.kind === 'sword' ? 'HIT' : 'BREAK')}
+              {label('HIT')}
             </button>
             {use && (
               <button type="button" className={`tbtn absolute ${held.use ? 'held' : ''}`} style={{ ...face(88, use.color), right: u(128), bottom: u(114) }} {...hold('use')}>

@@ -6,6 +6,28 @@
 const MAX_NUMBERS = 8
 let live = 0
 
+/** "x5 COMBO" over the crosshair (training dummies and fights alike). */
+export function showCombo(n) {
+  const layer = document.getElementById('dmg-layer')
+  if (!layer || n < 2 || live >= MAX_NUMBERS) return
+  const el = document.createElement('div')
+  el.className = 'dmg-num fancy'
+  const text = `x${n} COMBO`
+  el.textContent = text
+  el.dataset.text = text
+  el.style.setProperty('--fs', `calc(var(--u) * ${n >= 5 ? 30 : 24})`)
+  el.style.setProperty('--f1', '#e9fbff')
+  el.style.setProperty('--f2', n >= 5 ? '#c45cff' : '#3fb8ff')
+  el.style.left = '50%'
+  el.style.top = 'calc(50% + 40px)'
+  layer.appendChild(el)
+  live += 1
+  setTimeout(() => {
+    el.remove()
+    live -= 1
+  }, 800)
+}
+
 export function showHit(dmg = 0) {
   const marker = document.getElementById('hitmarker')
   if (marker) {

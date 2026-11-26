@@ -1,6 +1,7 @@
 import { CASES } from './balance.js'
 import {
   applyAdReward,
+  claimParkour,
   applyGemGrant,
   applyRoundResult,
   claimDaily,
@@ -13,7 +14,8 @@ import {
 /**
  * One player's profile for the length of a connection: the lobby actions that change
  * their save (cases, equipping, daily reward) and the grants (round rewards, Gems,
- * ads). Round play itself lives in host.js; it calls `awardRound` when your round ends.
+ * ads). Play itself lives in host.js; it calls `awardRound` when your duel (or a
+ * Spirelands life) ends.
  *
  * Runs in the Colyseus room and in the offline stand-in alike.
  */
@@ -90,7 +92,7 @@ export class PlayerSession {
 
   awardRound(result, now = Date.now()) {
     const r = applyRoundResult(this.profile, result, now, this.rand)
-    this.emit('roundReward', { ...r, fighters: result.fighters, mode: result.mode })
+    this.emit('roundReward', { ...r, mode: result.mode })
     for (const q of r.quests) this.emit('reward', { label: `Quest done: ${q.name} (+${q.cash} cash, +${q.xp} XP)` })
     if (r.levelUps.length) {
       this.emit('levelUp', { ups: r.levelUps })
@@ -115,6 +117,16 @@ export class PlayerSession {
     this.onLook(this.look())
     this.sendProfile()
     return { ok: true }
+  }
+
+  /** Reached the top of the lobby parkour in `ms`. */
+  parkour(ms, now = Date.now()) {
+    const r = claimParkour(this.profile, ms, now)
+    const time = (ms / 1000).toFixed(1)
+    const best = r.best ? ' - new best!' : ''
+    if (r.cash) this.emit('reward', { label: `Parkour done in ${time}s! +$${r.cash}${best}` })
+    else this.emit('toast', { text: `Parkour done in ${time}s${best} (today's reward is claimed)`, kind: 'success' })
+    this.sendProfile()
   }
 
   /** Playtime for the boards. */

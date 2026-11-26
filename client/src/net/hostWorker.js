@@ -36,6 +36,10 @@ function start({ id, name, save: stored }) {
       session.awardRound(result)
       save()
     },
+    onParkour: (_cid, ms) => {
+      session.parkour(ms)
+      save()
+    },
   })
   session.sendProfile()
   host.join(CID, name, session.look())

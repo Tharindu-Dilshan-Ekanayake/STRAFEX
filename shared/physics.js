@@ -7,6 +7,19 @@
  * fast knockback can't tunnel through a wall.
  */
 
+import { B } from './voxel.js'
+
+/** Swimming: how fast you swim up (holding jump), sink, and move through water. */
+export const SWIM = { up: 4.4, upAccel: 30, gravity: 7, maxSink: 3.5, speed: 0.6, climbOut: 7 }
+
+/** Is the body at feet (x, y, z) in water (feet or chest)? */
+export function inWater(world, x, y, z) {
+  return world.get(x, y + 0.3, z) === B.WATER || world.get(x, y + 1.1, z) === B.WATER
+}
+
+/** A jump pad's launch (blocks/s up): about 8 blocks high. */
+export const PAD_V = 21
+
 export const PLAYER = {
   halfW: 0.3,
   height: 1.8,
@@ -38,6 +51,17 @@ export function boxBlocked(world, x, y, z, hw = PLAYER.halfW, h = PLAYER.height)
     }
   }
   return false
+}
+
+/** Is a jump pad under the box? */
+export function onPad(world, x, y, z, hw = PLAYER.halfW) {
+  const by = Math.floor(y - 0.05)
+  const x0 = Math.floor(x - hw)
+  const x1 = Math.floor(x + hw)
+  const z0 = Math.floor(z - hw)
+  const z1 = Math.floor(z + hw)
+  const P = B.JUMP_PAD
+  return world.get(x0, by, z0) === P || world.get(x1, by, z0) === P || world.get(x0, by, z1) === P || world.get(x1, by, z1) === P
 }
 
 /** Is there a solid block right under the box (what you'd stand on)? */
@@ -72,10 +96,12 @@ export function createBody(x = 0, y = 0, z = 0) {
  */
 export function stepBody(world, body, input, dt, speedMul = 1, jumpMul = 1) {
   const p = PLAYER
-  const speed = (input.sneak ? p.sneak : input.sprint ? p.sprint : p.walk) * speedMul
+  const wet = inWater(world, body.x, body.y, body.z)
+  body.inWater = wet
+  const speed = (input.sneak ? p.sneak : input.sprint ? p.sprint : p.walk) * speedMul * (wet ? SWIM.speed : 1)
   const wantX = (input.moveX || 0) * speed
   const wantZ = (input.moveZ || 0) * speed
-  const accel = body.onGround ? p.groundAccel : p.airAccel
+  const accel = body.onGround || wet ? p.groundAccel : p.airAccel
   const k = Math.min(1, accel * dt)
   // Walking velocity eases toward the wish; pushes (knockback) ride on top and fade.
   body.vx += (wantX - body.vx) * k
@@ -90,11 +116,18 @@ export function stepBody(world, body, input, dt, speedMul = 1, jumpMul = 1) {
     body.pushZ *= f
   }
 
-  if (input.jump && body.onGround) {
-    body.vy = p.jumpV * jumpMul
-    body.onGround = false
+  if (wet) {
+    // Swimming: hold jump to rise, otherwise sink slowly; water slows a fall at once.
+    if (input.jump) body.vy = Math.min(SWIM.up, body.vy + SWIM.upAccel * dt)
+    else body.vy = Math.max(-SWIM.maxSink, body.vy - SWIM.gravity * dt)
+    if (body.vy < -SWIM.maxSink) body.vy = -SWIM.maxSink
+  } else {
+    if (input.jump && body.onGround) {
+      body.vy = p.jumpV * jumpMul
+      body.onGround = false
+    }
+    body.vy = Math.max(-p.maxFall, body.vy - p.gravity * dt)
   }
-  body.vy = Math.max(-p.maxFall, body.vy - p.gravity * dt)
 
   const dx = (body.vx + body.pushX) * dt
   const dy = body.vy * dt
@@ -147,6 +180,15 @@ export function stepBody(world, body, input, dt, speedMul = 1, jumpMul = 1) {
 
   body.onGround = landed || (body.vy <= 0 && hasSupport(world, body.x, body.y, body.z) && Math.abs(body.y - Math.round(body.y)) < 0.02)
   if (body.onGround && body.vy < 0) body.vy = 0
+  // Swimming into the shore: climb out.
+  if (wet && body.hitWall && (wantX || wantZ)) body.vy = Math.max(body.vy, SWIM.climbOut)
+  // Standing on a jump pad: up you go (`bounced` tells the caller, for the sound).
+  body.bounced = false
+  if (body.onGround && onPad(world, body.x, body.y, body.z)) {
+    body.vy = PAD_V
+    body.onGround = false
+    body.bounced = true
+  }
 
   // Auto-jump: walking into a single block with room above it.
   if (input.autoJump && body.onGround && body.hitWall && (wantX || wantZ)) {

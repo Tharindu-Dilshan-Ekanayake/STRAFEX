@@ -164,7 +164,7 @@ export function LevelUpBanner() {
       </span>
       {won && (
         <span className="txt-o" style={{ fontSize: u(17), color: '#e6c7ff' }}>
-          Free {won.kind}: {(won.kind === 'cape' ? CAPES : SWORD_SKINS)[won.id]?.name || won.id}
+          Free {won.kind === 'cape' ? 'kill effect' : 'sword skin'}: {(won.kind === 'cape' ? CAPES : SWORD_SKINS)[won.id]?.name || won.id}
           {won.duplicate ? ` (duplicate, +$${won.refund})` : ''}
         </span>
       )}
@@ -175,7 +175,7 @@ export function LevelUpBanner() {
 export function KillFeed() {
   const feed = useGame((s) => s.feed)
   if (!feed.length) return null
-  const how = { melee: '⚔', arrow: '➶', snowball: '❄', tnt: '✹', lava: '🔥', void: '↓', burn: '🔥', lightning: 'ϟ', left: '⇥', pearl: '✦' }
+  const how = { melee: '⚔', arrow: '➶', boom: '✹', void: '↓', fall: '⤓', gust: '🌀', left: '⇥', pearl: '✦' }
   return (
     <div className="tr-feed flex flex-col items-end" style={{ gap: u(4) }}>
       {feed.map((f) => (
@@ -190,7 +190,7 @@ export function KillFeed() {
             </>
           ) : (
             <>
-              <span style={{ color: '#ff8a8a' }}>{f.v}</span> {f.how === 'left' ? 'left the round' : f.how === 'lava' ? 'melted in the lava' : 'was eliminated'}
+              <span style={{ color: '#ff8a8a' }}>{f.v}</span> {f.how === 'left' ? 'left' : f.how === 'void' ? 'fell into the void' : f.how === 'fall' ? 'hit the ground too hard' : f.how === 'boom' ? 'blew up' : 'was eliminated'}
             </>
           )}
         </div>

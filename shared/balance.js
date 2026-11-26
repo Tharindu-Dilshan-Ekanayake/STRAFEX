@@ -1,309 +1,374 @@
 import { B } from './voxel.js'
 
 /**
- * Every number that shapes the game: round timings, items, what lucky blocks give,
- * rewards, cases and their cosmetics, and the Gems products. Shared by the server and
- * the client so both always agree.
+ * Every number that shapes STRAFEX: duel and Spirelands timings, the kits, items and
+ * armour, combat rules, rewards, quests, cases and their cosmetics, and the Gems
+ * products. Shared by the server and the client so both always agree.
  */
 
-// --- The round ------------------------------------------------------------------------
+// --- Duels ------------------------------------------------------------------------------
 
-export const ROUND = {
-  /**
-   * Lobby time before a round, in three steps: a countdown (`waitMs`), the mode vote
-   * (`modeVoteMs`), then the map vote (`mapVoteMs`). A vote step ends early once
-   * everyone has voted; the countdown always runs out.
-   */
-  waitMs: 30_000,
-  modeVoteMs: 15_000,
-  mapVoteMs: 15_000,
-  intermissionMs: 60_000,
-  /** The same after a round, when everyone comes back to the lobby. */
-  intermissionAfterMs: 60_000,
-  /** In the glass cages above your island before they open. */
-  cagesMs: 5_000,
-  /** Longest a round can last; the lava ends it before then. */
-  fightMs: 240_000,
-  /** Winner on screen before everyone goes back to the lobby. */
-  endMs: 7_000,
-  /** Fighters in a round: every empty island is filled with a bot. */
-  minFighters: 8,
-  maxFighters: 8,
-  /** Health in half-hearts (20 = ten hearts). */
-  hp: 20,
+export const DUEL = {
+  /** Both players pick a map (ends early once both have voted). */
+  voteMs: 10_000,
+  /** Frozen on your spawn before each round: 3, 2, 1, FIGHT. */
+  countdownMs: 3_000,
+  /** Longest a round lasts; then the healthier player takes it. */
+  roundMs: 150_000,
+  /** The round winner on screen before the arena resets. */
+  betweenMs: 2_800,
+  /** The duel's winner on screen before both go back to the lobby. */
+  endMs: 6_500,
+  /** Alone in a queue this long (online), you get a bot. Alone on the server: `soloBotMs`. */
+  botFillMs: 8_000,
+  soloBotMs: 2_200,
 }
 
-/** The lava: where it starts, when it starts climbing and where it ends. */
-export const LAVA = {
-  startY: 6,
-  riseAfterMs: 50_000,
-  /**
-   * Two stages: a slow creep up to `surgeY` (under the islands: it threatens nobody
-   * standing, it just looks closer), then a surge that floods the islands and ends any
-   * stand-off, reaching `endY` `finishEarlyMs` before the clock runs out.
-   */
-  surgeY: 18,
-  surgeAt: 0.53,
-  finishEarlyMs: 15_000,
-  endY: 40,
-  /** Damage every `tickMs` while you stand in it. */
-  damage: 4,
-  tickMs: 500,
+/** Spirelands, the free-for-all world. */
+export const FFA = {
+  /** People + bots the world is kept at (bots fill the gap, up to `maxBots`). */
+  population: 6,
+  maxBots: 4,
+  /** This many real players in Spirelands and the bots all leave: people only from then on. */
+  botsOffAt: 5,
+  /** Everyone a server holds can be in Spirelands at once. */
+  maxPlayers: 50,
+  /** A dead bot comes back after this. */
+  botRespawnMs: 6_000,
+  /** Broken ground grows back and placed blocks crumble after this. */
+  restoreMs: 90_000,
+  /** A kill heals the killer this much. */
+  killHeal: 6,
 }
 
-/** Lava height `ms` into the fight. */
-export function lavaHeight(ms, mode = 'classic') {
-  const m = MODES[mode] || MODES.classic
-  const start = LAVA.riseAfterMs * m.lavaDelay
-  if (ms <= start) return LAVA.startY
-  const end = m.lavaEndMs || ROUND.fightMs - LAVA.finishEarlyMs
-  const t = Math.min(1, (ms - start) / (end - start))
-  if (t < LAVA.surgeAt) return LAVA.startY + (LAVA.surgeY - LAVA.startY) * (t / LAVA.surgeAt)
-  return LAVA.surgeY + (LAVA.endY - LAVA.surgeY) * ((t - LAVA.surgeAt) / (1 - LAVA.surgeAt))
+/** Health in half-hearts (20 = ten hearts). */
+export const HP = 20
+
+// --- Combat -----------------------------------------------------------------------------
+
+export const COMBAT = {
+  /** After a hit lands, the target can't take another for this long (no damage stacking). */
+  iframesMs: 450,
+  /** Base knockback of a melee hit (blocks/s), and the boost for a sprinting hitter. */
+  knock: 6.4,
+  knockUp: 6,
+  sprintKnock: 1.45,
+  /** A hit while falling: this many times the damage. */
+  critMul: 1.5,
+  /** Melee reach (blocks, eye to the nearest point of the target), and the spear's. */
+  reach: 3.1,
+  /** Shield: raised this long before it blocks; an axe hit puts it down for `shieldOffMs`. */
+  shieldWindupMs: 120,
+  shieldOffMs: 5_000,
+  /** Mace smash: extra damage per block fallen (first 3 blocks, then after), capped. */
+  maceFirst: 4,
+  maceAfter: 2,
+  maceCap: 24,
+  /** Falls longer than this many blocks hurt, a half-heart per block more. */
+  safeFall: 3.2,
+  /** Out of a fight this long, you heal (kits with natural regeneration). */
+  regenDelayMs: 5_000,
+  regenMs: 2_500,
+  /** Spear lunge: dash speed, how long the next hit is boosted, and the boost. */
+  lungeSpeed: 15,
+  lungeLift: 3.5,
+  lungeHitMs: 700,
+  lungeBonus: 3,
 }
 
-/** Game modes the lobby votes on. */
-export const MODES = {
-  classic: {
-    name: 'Solo',
-    blurb: 'Free for all: every player for themselves. Last one standing wins!',
-    color: '#f6b52d',
-    teams: 0,
-    luckyPerIsland: 3,
-    rareChance: 0.05,
-    hpBonus: 0,
-    lavaDelay: 1,
-    rolls: 1,
-  },
-  teams4: {
-    name: '4 Teams',
-    blurb: '2v2v2v2: teams of two on neighbouring islands. Last team standing wins!',
-    color: '#3fa2ff',
-    teams: 4,
-    luckyPerIsland: 3,
-    rareChance: 0.08,
-    hpBonus: 0,
-    lavaDelay: 1,
-    rolls: 1,
-  },
-  teams3: {
-    name: '3 Teams',
-    blurb: '3v3v2 (the team of two gets extra hearts). Last team standing wins!',
-    color: '#e0782b',
-    teams: 3,
-    luckyPerIsland: 3,
-    rareChance: 0.09,
-    hpBonus: 2,
-    lavaDelay: 1,
-    rolls: 1,
-  },
-  teams2: {
-    name: '2 Teams',
-    blurb: '4v4: one half of the ring each. Bridge across together and push!',
-    color: '#2bb37a',
-    teams: 2,
-    luckyPerIsland: 3,
-    rareChance: 0.1,
-    hpBonus: 4,
-    lavaDelay: 1,
-    rolls: 1,
-  },
-  maxluck: {
-    name: 'Max Luck',
-    blurb: 'Every lucky block is a Mega Lucky Block, and they give double!',
-    color: '#b34cf0',
-    teams: 0,
-    luckyPerIsland: 4,
-    rareChance: 1,
-    hpBonus: 10,
-    lavaDelay: 1,
-    rolls: 2,
-  },
-  lavarush: {
-    name: 'Lava Rush',
-    blurb: 'The lava starts rising right away. Build fast!',
-    color: '#ef4b2b',
-    teams: 0,
-    luckyPerIsland: 3,
-    rareChance: 0.15,
-    hpBonus: 0,
-    lavaDelay: 0.15,
-    /** The lava is done by this far into the fight (the default is fightMs - finishEarlyMs). */
-    lavaEndMs: 170_000,
-    rolls: 1,
-  },
-}
-
-/** How hard bots play: how well they aim and time hits, and how hard they hit. */
+/** Bots: how well they aim and time hits, how hard they hit, and how fast they react. */
 export const BOT_LEVELS = {
-  off: { name: 'No bots', skill: [0.5, 0.85], damage: 0.8, reaction: 1, color: '#8b84a8' },
-  easy: { name: 'Easy', skill: [0.3, 0.5], damage: 0.6, reaction: 1.6, color: '#5ee26a' },
-  normal: { name: 'Medium', skill: [0.5, 0.85], damage: 0.8, reaction: 1, color: '#f6b52d' },
-  hard: { name: 'Hard', skill: [0.8, 0.98], damage: 1, reaction: 0.6, color: '#ff5a4a' },
+  easy: { name: 'Easy', skill: [0.3, 0.5], damage: 0.6, reaction: 1.7, color: '#5ee26a' },
+  normal: { name: 'Medium', skill: [0.55, 0.8], damage: 0.85, reaction: 1.1, color: '#f6b52d' },
+  hard: { name: 'Hard', skill: [0.8, 0.97], damage: 1, reaction: 0.75, color: '#ff5a4a' },
 }
 export const BOT_LEVEL_IDS = Object.keys(BOT_LEVELS)
 
-/** Team colours, by team index (team modes only). */
+/** The two sides of a duel (index 0 and 1) and Spirelands kill-feed colours. */
 export const TEAMS = [
   { name: 'Blue', color: '#3fa2ff' },
   { name: 'Red', color: '#ff5a4a' },
-  { name: 'Green', color: '#5ee26a' },
-  { name: 'Yellow', color: '#ffd23b' },
 ]
-export const MODE_IDS = Object.keys(MODES)
+
+// --- Armour -----------------------------------------------------------------------------
+
+/**
+ * Armour sets: protection points and durability per piece (helmet, chestplate, leggings,
+ * boots), toughness, and knockback resistance. Damage taken is reduced by the points
+ * (less so against big hits, more with toughness); each hit wears every piece down.
+ */
+export const ARMOR = {
+  none: { name: 'No armour', points: [0, 0, 0, 0], dura: [0, 0, 0, 0], tough: 0, kbRes: 0, color: null },
+  iron: { name: 'Iron', points: [2, 6, 5, 2], dura: [165, 240, 225, 195], tough: 0, kbRes: 0, color: '#d6dbe2' },
+  diamond: { name: 'Diamond', points: [3, 8, 6, 3], dura: [363, 528, 495, 429], tough: 2, kbRes: 0, color: '#4fd8e6' },
+  cindersteel: { name: 'Cindersteel', points: [3, 8, 6, 3], dura: [407, 592, 555, 481], tough: 3, kbRes: 0.25, color: '#6b4fa8' },
+}
+export const ARMOR_PIECES = ['Helmet', 'Chestplate', 'Leggings', 'Boots']
+
+/** Damage left after armour: `points` still unbroken, `tough` the set's toughness. */
+export function armorReduce(dmg, points, tough) {
+  if (points <= 0) return dmg
+  const def = Math.min(20, Math.max(points / 5, points - (4 * dmg) / (tough + 8)))
+  return dmg * (1 - def / 25)
+}
 
 // --- Items ------------------------------------------------------------------------------
 
 /**
  * Everything that can sit in the hotbar. `kind`:
- * - sword / tool: melee, `dmg` per hit (tool also breaks blocks `mine` times faster)
+ * - sword / axe / mace / spear: melee, `dmg` per hit, `cd` ms between swings that count
+ *   (axe: also knocks a raised shield down; mace: smashes harder the further you fell;
+ *   spear: longer reach, right click lunges forward)
+ * - shield: hold right click (with a weapon or the shield in hand) to block from the front
  * - bow: shoots arrows; the stack count is its arrows
- * - throw: thrown projectile (snowball knocks back, pearl teleports you)
- * - tnt: placed like a block, lights itself and explodes
- * - food / potion / heart: used up with right click
+ * - throw: thrown projectile (pearl teleports you, gust bursts and launches everyone near)
+ * - splash: a thrown potion that heals everyone where it breaks
+ * - crystal: placed on obsidian or corestone; hit it and it explodes
+ * - charm: kept anywhere in your hotbar, it saves you once from a killing blow
+ * - food / potion: used up with right click
  * - block: builds; `block` is the block it places
  */
 export const ITEMS = {
-  fist: { name: 'Fist', kind: 'none', dmg: 1, icon: 'fist' },
-  wood_sword: { name: 'Wooden Sword', kind: 'sword', dmg: 4, icon: 'sword', tier: 'wood', stack: 1 },
-  stone_sword: { name: 'Stone Sword', kind: 'sword', dmg: 5, icon: 'sword', tier: 'stone', stack: 1 },
-  iron_sword: { name: 'Iron Sword', kind: 'sword', dmg: 6, icon: 'sword', tier: 'iron', stack: 1 },
-  diamond_sword: { name: 'Diamond Sword', kind: 'sword', dmg: 7, icon: 'sword', tier: 'diamond', stack: 1 },
-  blaze_sword: { name: 'Blaze Sword', kind: 'sword', dmg: 8, burn: 3, icon: 'sword', tier: 'blaze', stack: 1 },
-  pickaxe: { name: 'Lucky Pickaxe', kind: 'tool', dmg: 3, mine: 3, icon: 'pickaxe', stack: 1 },
+  fist: { name: 'Fist', kind: 'none', dmg: 1, cd: 250, icon: 'fist' },
+  iron_sword: { name: 'Iron Sword', kind: 'sword', dmg: 6, cd: 90, icon: 'sword', tier: 'iron', stack: 1 },
+  diamond_sword: { name: 'Diamond Sword', kind: 'sword', dmg: 7, cd: 90, icon: 'sword', tier: 'diamond', stack: 1 },
+  cinder_sword: { name: 'Cindersteel Sword', kind: 'sword', dmg: 8, cd: 90, icon: 'sword', tier: 'cinder', stack: 1 },
+  diamond_axe: { name: 'Diamond Axe', kind: 'axe', dmg: 9, cd: 850, icon: 'axe', tier: 'diamond', stack: 1 },
+  cinder_axe: { name: 'Cindersteel Axe', kind: 'axe', dmg: 10, cd: 850, icon: 'axe', tier: 'cinder', stack: 1 },
+  mace: { name: 'Mace', kind: 'mace', dmg: 6, cd: 550, icon: 'mace', stack: 1 },
+  spear: { name: 'Spear', kind: 'spear', dmg: 5, cd: 450, reach: 4.6, lungeCd: 1_700, icon: 'spear', stack: 1 },
+  shield: { name: 'Shield', kind: 'shield', dmg: 1, cd: 250, icon: 'shield', stack: 1 },
   bow: { name: 'Bow', kind: 'bow', dmg: 6, icon: 'bow', stack: 32 },
-  snowball: { name: 'Snowball', kind: 'throw', dmg: 1, knock: 9, icon: 'snowball', stack: 16 },
-  pearl: { name: 'Warp Pearl', kind: 'throw', dmg: 0, icon: 'pearl', stack: 8 },
-  tnt: { name: 'TNT', kind: 'tnt', icon: 'tnt', stack: 8 },
-  bread: { name: 'Bread', kind: 'food', heal: 5, icon: 'bread', stack: 16 },
-  gapple: { name: 'Golden Apple', kind: 'food', heal: 10, regen: 6, icon: 'gapple', stack: 8 },
-  potion_speed: { name: 'Speed Potion', kind: 'potion', effect: 'speed', dur: 25, icon: 'potion', color: '#5fd3ff', stack: 4 },
-  potion_jump: { name: 'Jump Potion', kind: 'potion', effect: 'jump', dur: 25, icon: 'potion', color: '#7cff6b', stack: 4 },
-  potion_strength: { name: 'Strength Potion', kind: 'potion', effect: 'strength', dur: 20, icon: 'potion', color: '#ff5050', stack: 4 },
-  potion_heal: { name: 'Healing Potion', kind: 'potion', heal: 8, icon: 'potion', color: '#ff7bd5', stack: 4 },
-  heart: { name: 'Heart Crystal', kind: 'heart', maxHp: 4, icon: 'heart', stack: 4 },
+  pearl: { name: 'Warp Pearl', kind: 'throw', proj: 'pearl', dmg: 0, icon: 'pearl', stack: 16 },
+  gust: { name: 'Gust Charge', kind: 'throw', proj: 'gust', dmg: 1, icon: 'gust', stack: 32 },
+  splash_heal: { name: 'Splash Healing', kind: 'splash', proj: 'splash', heal: 8, icon: 'splash', color: '#ff4f6d', stack: 16 },
+  crystal: { name: 'Blast Crystal', kind: 'crystal', icon: 'crystal', stack: 64 },
+  charm: { name: 'Revive Charm', kind: 'charm', icon: 'charm', stack: 1 },
+  gapple: { name: 'Golden Apple', kind: 'food', heal: 2, absorb: 4, regen: 5, icon: 'gapple', stack: 64 },
+  potion_speed: { name: 'Speed Potion', kind: 'potion', effect: 'speed', dur: 45, icon: 'potion', color: '#5fd3ff', stack: 4 },
+  potion_strength: { name: 'Strength Potion', kind: 'potion', effect: 'strength', dur: 30, icon: 'potion', color: '#ff5050', stack: 4 },
   wool: { name: 'Wool', kind: 'block', block: B.WOOL_WHITE, icon: 'block', stack: 64 },
   planks: { name: 'Planks', kind: 'block', block: B.PLANKS, icon: 'block', stack: 64 },
   stone_bricks: { name: 'Stone Bricks', kind: 'block', block: B.STONE_BRICKS, icon: 'block', stack: 64 },
-  dirt: { name: 'Dirt', kind: 'block', block: B.DIRT, icon: 'block', stack: 64 },
   sandstone: { name: 'Sandstone', kind: 'block', block: B.SANDSTONE, icon: 'block', stack: 64 },
-  snow: { name: 'Snow', kind: 'block', block: B.SNOW, icon: 'block', stack: 64 },
-  candy: { name: 'Candy', kind: 'block', block: B.CANDY_PINK, icon: 'block', stack: 64 },
+  dirt: { name: 'Dirt', kind: 'block', block: B.DIRT, icon: 'block', stack: 64 },
+  obsidian: { name: 'Obsidian', kind: 'block', block: B.OBSIDIAN, icon: 'block', stack: 64 },
 }
+
+/** Melee weapons (what a hit counts as, and what bots pick to fight with). */
+export const MELEE_KINDS = new Set(['sword', 'axe', 'mace', 'spear', 'none', 'shield'])
 
 /** What everyone holds in the lobby (shown with their sword skin; it does no damage). */
 export const LOBBY_SWORD = 'diamond_sword'
 
 /** The hotbar has this many slots. */
 export const HOTBAR = 9
-/** How far you reach to break, place and hit (blocks). */
+/**
+ * The whole inventory, one array: slots 0-8 the hotbar, 9-35 the bag (27), 36 the
+ * offhand (the left hand: a shield there blocks while your sword stays in the right).
+ */
+export const BAG = 27
+export const OFFHAND = HOTBAR + BAG
+export const INV_SIZE = OFFHAND + 1
+/** How far you reach to break and place (blocks). */
 export const REACH = 5
-export const MELEE_REACH = 3.6
-/** Fastest you can swing (ms between hits that count). */
-export const ATTACK_COOLDOWN_MS = 420
-/** Seconds to break a block by hand, before tools. */
-export const breakSeconds = (hard, item) => (ITEMS[item]?.mine ? hard / ITEMS[item].mine : hard)
+export const MELEE_REACH = COMBAT.reach
+/** Fastest the client sends swings (ms); the real limit is each weapon's `cd`. */
+export const ATTACK_COOLDOWN_MS = 90
+/** Seconds to break a block by hand (no tools in STRAFEX). */
+export const breakSeconds = (hard) => hard
 
 /** Potion effects: what they multiply. */
 export const EFFECTS = {
-  speed: { speedMul: 1.35 },
+  speed: { speedMul: 1.3 },
   jump: { jumpMul: 1.3 },
   strength: { dmgAdd: 3 },
   regen: {},
   burn: {},
 }
 
-/** Projectiles: launch speed (blocks/s), gravity, and lifetime. */
+/** Projectiles: launch speed (blocks/s), gravity, lifetime and size. */
 export const PROJECTILES = {
-  arrow: { speed: 34, gravity: 18, life: 3, size: 0.25 },
-  snowball: { speed: 26, gravity: 16, life: 2.5, size: 0.3 },
-  pearl: { speed: 24, gravity: 16, life: 3, size: 0.3 },
+  arrow: { speed: 36, gravity: 18, life: 3, size: 0.25 },
+  pearl: { speed: 26, gravity: 16, life: 3, size: 0.3 },
+  gust: { speed: 24, gravity: 6, life: 1.6, size: 0.35 },
+  splash: { speed: 18, gravity: 20, life: 2.5, size: 0.3 },
 }
 
-export const TNT = { fuseMs: 2600, radius: 3.4, damage: 14, knock: 13 }
+/** A gust charge's burst: radius, push, and the launch for whoever threw it. */
+export const GUST = { radius: 2.8, push: 11, lift: 9, selfLift: 15.5 }
+/** A splash potion's reach (full effect at the middle, half at the edge). */
+export const SPLASH = { radius: 3.6 }
+/** A blast crystal's explosion. */
+export const CRYSTAL = { radius: 4.6, damage: 17, knock: 13 }
 
-// --- Lucky blocks -----------------------------------------------------------------------
+// --- Kits (the modes) ---------------------------------------------------------------------
 
 /**
- * What a lucky block gives: `give` = items, `bad` = an unlucky surprise. `w` is the
- * weight for a regular block, `rw` for a Mega one. Every lucky block also gives a few
- * blocks on top (LUCKY_BONUS_BLOCKS), so nobody is ever stuck on their island.
+ * Every mode is a kit: what you start with, your armour, whether you heal on your own,
+ * and how many rounds win a duel (`ft`, first to). The same kits are picked in
+ * Spirelands. `hotbar` is slot by slot: `[itemId, count]` or null; `offhand` what starts
+ * in your left hand; `bag` the refills in the rest of the inventory (E to open it).
  */
-export const LUCKY_LOOT = [
-  { w: 12, rw: 4, give: [['wool', 16]], text: 'Wool!' },
-  { w: 9, rw: 4, give: [['planks', 24]], text: 'Planks!' },
-  { w: 9, rw: 1, give: [['stone_sword', 1]], text: 'Stone Sword!' },
-  { w: 6, rw: 5, give: [['iron_sword', 1]], text: 'Iron Sword!' },
-  { w: 2.4, rw: 7, give: [['diamond_sword', 1]], text: 'Diamond Sword!' },
-  { w: 0.8, rw: 4, give: [['blaze_sword', 1]], text: 'BLAZE SWORD!' },
-  { w: 5, rw: 6, give: [['bow', 10]], text: 'Bow & arrows!' },
-  { w: 6, rw: 3, give: [['bread', 3]], text: 'Bread!' },
-  { w: 2.5, rw: 5, give: [['gapple', 1]], text: 'Golden Apple!' },
-  { w: 6, rw: 3, give: [['snowball', 8]], text: 'Snowballs!' },
-  { w: 3, rw: 4, give: [['pearl', 2]], text: 'Warp Pearls!' },
-  { w: 3, rw: 4, give: [['tnt', 2]], text: 'TNT!' },
-  { w: 3.5, rw: 3, give: [['potion_speed', 1]], text: 'Speed Potion!' },
-  { w: 3.5, rw: 3, give: [['potion_jump', 1]], text: 'Jump Potion!' },
-  { w: 2.5, rw: 4, give: [['potion_strength', 1]], text: 'Strength Potion!' },
-  { w: 3, rw: 3, give: [['potion_heal', 1]], text: 'Healing Potion!' },
-  { w: 2, rw: 4, give: [['heart', 1]], text: '+2 Max Hearts!' },
-  { w: 3.5, rw: 2, give: [['pickaxe', 1]], text: 'Lucky Pickaxe!' },
-  { w: 3, rw: 2, give: [['wool', 32], ['stone_bricks', 16]], text: 'Building spree!' },
-  { w: 3, rw: 0.5, bad: 'tnt', text: 'UNLUCKY! TNT!' },
-  { w: 2, rw: 0.4, bad: 'lightning', text: 'UNLUCKY! Lightning!' },
-  { w: 1.6, rw: 0.4, bad: 'launch', text: 'UNLUCKY! Yeet!' },
-]
-export const LUCKY_BONUS_BLOCKS = 8
+export const MODES = {
+  strafex: {
+    name: 'STRAFEX',
+    blurb: 'UHC + Mace + Gust Charges + Utility',
+    color: '#ffb21a',
+    armor: 'diamond',
+    regen: false,
+    ft: 2,
+    hotbar: [['diamond_sword', 1], ['mace', 1], ['gust', 8], ['bow', 12], ['gapple', 6], ['wool', 64], ['planks', 64], ['pearl', 2]],
+    offhand: ['charm', 1],
+    bag: [['gust', 8], ['gapple', 4], ['wool', 64], ['pearl', 2]],
+  },
+  sword: {
+    name: 'SWORD',
+    blurb: 'Pure sword combat and combos',
+    color: '#45dbe6',
+    armor: 'diamond',
+    regen: true,
+    ft: 3,
+    hotbar: [['diamond_sword', 1]],
+    bag: [],
+  },
+  axe: {
+    name: 'AXE',
+    blurb: 'Axe + Shield timing battles',
+    color: '#9fe6ff',
+    armor: 'diamond',
+    regen: true,
+    ft: 2,
+    hotbar: [['diamond_axe', 1], ['diamond_sword', 1], ['bow', 12], ['gapple', 4]],
+    offhand: ['shield', 1],
+    bag: [['gapple', 2]],
+  },
+  crystal: {
+    name: 'CRYSTAL',
+    blurb: 'Blast Crystals + Obsidian + Explosions',
+    color: '#d05cff',
+    armor: 'cindersteel',
+    regen: true,
+    ft: 2,
+    hotbar: [['cinder_sword', 1], ['crystal', 64], ['obsidian', 64], ['gapple', 16], ['pearl', 8], ['shield', 1], ['splash_heal', 4]],
+    offhand: ['charm', 1],
+    bag: [['crystal', 64], ['obsidian', 64], ['charm', 1], ['charm', 1], ['gapple', 16], ['splash_heal', 4]],
+  },
+  uhc: {
+    name: 'UHC',
+    blurb: 'Classic UHC - no natural regen',
+    color: '#ffd23b',
+    armor: 'diamond',
+    regen: false,
+    ft: 2,
+    hotbar: [['diamond_sword', 1], ['diamond_axe', 1], ['bow', 16], ['gapple', 6], ['planks', 64], ['stone_bricks', 64]],
+    offhand: ['shield', 1],
+    bag: [['planks', 64], ['gapple', 2]],
+  },
+  mace: {
+    name: 'MACE',
+    blurb: 'Mace + Gust Charges',
+    color: '#b8c2d6',
+    armor: 'diamond',
+    regen: true,
+    ft: 2,
+    hotbar: [['mace', 1], ['diamond_sword', 1], ['gust', 16], ['gapple', 6], ['pearl', 4]],
+    offhand: ['shield', 1],
+    bag: [['gust', 16], ['gapple', 4]],
+  },
+  spear: {
+    name: 'SPEAR MACE',
+    blurb: 'Spear Lunge + Mace',
+    color: '#5ee26a',
+    armor: 'diamond',
+    regen: true,
+    ft: 2,
+    hotbar: [['spear', 1], ['mace', 1], ['gust', 8], ['gapple', 6], ['diamond_sword', 1]],
+    bag: [['gust', 8], ['gapple', 2]],
+  },
+  pot: {
+    name: 'POT',
+    blurb: 'Diamond + healing potions',
+    color: '#ff4f6d',
+    armor: 'diamond',
+    regen: false,
+    ft: 2,
+    hotbar: [['diamond_sword', 1], ['splash_heal', 16], ['potion_speed', 2], ['potion_strength', 1], ['pearl', 4], ['splash_heal', 8]],
+    bag: [['splash_heal', 16], ['splash_heal', 16], ['potion_speed', 2], ['potion_strength', 2]],
+  },
+  smp: {
+    name: 'SMP',
+    blurb: 'Cindersteel, pearls, charms, potions',
+    color: '#8a6bd8',
+    armor: 'cindersteel',
+    regen: true,
+    ft: 1,
+    hotbar: [['cinder_sword', 1], ['cinder_axe', 1], ['pearl', 8], ['gapple', 12], ['splash_heal', 6], ['potion_speed', 2], ['charm', 1]],
+    offhand: ['shield', 1],
+    bag: [['pearl', 8], ['gapple', 8], ['splash_heal', 6], ['charm', 1]],
+  },
+}
+export const MODE_IDS = Object.keys(MODES)
 
-/** One draw from the loot table (`rare` = a Mega Lucky Block). */
-export function rollLucky(rng, rare = false) {
-  const weight = (e) => (rare ? e.rw : e.w)
-  const total = LUCKY_LOOT.reduce((s, e) => s + weight(e), 0)
-  let r = rng() * total
-  for (const entry of LUCKY_LOOT) {
-    r -= weight(entry)
-    if (r <= 0) return entry
-  }
-  return LUCKY_LOOT[0]
+/** A fresh inventory from a kit: hotbar, bag and offhand (each stack its own object). */
+export function kitHotbar(modeId) {
+  const kit = MODES[modeId] || MODES.sword
+  const inv = new Array(INV_SIZE).fill(null)
+  kit.hotbar.forEach((slot, i) => {
+    if (slot && i < HOTBAR) inv[i] = { id: slot[0], n: slot[1] }
+  })
+  ;(kit.bag || []).forEach((slot, i) => {
+    if (slot && i < BAG) inv[HOTBAR + i] = { id: slot[0], n: slot[1] }
+  })
+  if (kit.offhand) inv[OFFHAND] = { id: kit.offhand[0], n: kit.offhand[1] }
+  return inv
+}
+
+/** Fresh armour for a kit: `{ tier, dura: [...] }`. */
+export function kitArmor(modeId) {
+  const tier = (MODES[modeId] || MODES.sword).armor || 'none'
+  return { tier, dura: [...ARMOR[tier].dura] }
 }
 
 // --- Rewards ----------------------------------------------------------------------------
 
+/** Cash: for a duel played / won, and per kill (kills in Spirelands pay as they happen). */
 export const REWARDS = {
   play: 20,
-  kill: 40,
-  win: 150,
-  /** Extra for 2nd and 3rd place. */
-  placement: [0, 60, 30],
+  win: 100,
+  kill: 25,
+  /** Killing someone on a streak of `BOUNTY_STREAK` or more in Spirelands. */
+  bounty: 75,
+  /** Reaching the top of the lobby's parkour, once a day. */
+  parkour: 150,
 }
+/** Kills in one Spirelands life that put a bounty on your head. */
+export const BOUNTY_STREAK = 3
 
 // --- Progression: XP, levels, daily quests ----------------------------------------------
 
-/** XP for a round. Lucky blocks count up to `maxLucky` a round. */
-export const XP = { play: 25, kill: 20, lucky: 4, maxLucky: 15, win: 80, placement: [0, 40, 20] }
+/** XP for a duel or a Spirelands life. */
+export const XP = { play: 20, win: 60, kill: 15, perHits: 1, maxHits: 30 }
 /** XP from `level` to the next one: 120, 160, 200, ... */
 export const levelXp = (level) => 80 + level * 40
 /** Cash on reaching a level; every fifth level also gives a free case. */
 export const levelCash = (level) => 50 + level * 10
 export const LEVEL_CASE_EVERY = 5
 
-/** Three of these each day. `stat` is what a round adds to (see logic.questStats). */
+/** Three of these each day. `stat` is what a duel or a life adds to (see logic.questStats). */
 export const QUESTS = {
+  win1: { name: 'Win a duel', stat: 'wins', goal: 1, cash: 150, xp: 60 },
+  win4: { name: 'Win 4 duels', stat: 'wins', goal: 4, cash: 350, xp: 140 },
+  duels3: { name: 'Play 3 duels', stat: 'duels', goal: 3, cash: 100, xp: 40 },
+  duels8: { name: 'Play 8 duels', stat: 'duels', goal: 8, cash: 250, xp: 100 },
   kills5: { name: 'Get 5 kills', stat: 'kills', goal: 5, cash: 150, xp: 60 },
-  kills12: { name: 'Get 12 kills', stat: 'kills', goal: 12, cash: 300, xp: 120 },
-  win1: { name: 'Win a round', stat: 'wins', goal: 1, cash: 200, xp: 80 },
-  lucky15: { name: 'Break 15 lucky blocks', stat: 'lucky', goal: 15, cash: 120, xp: 50 },
-  lucky40: { name: 'Break 40 lucky blocks', stat: 'lucky', goal: 40, cash: 250, xp: 100 },
-  play3: { name: 'Play 3 rounds', stat: 'games', goal: 3, cash: 100, xp: 40 },
-  play8: { name: 'Play 8 rounds', stat: 'games', goal: 8, cash: 250, xp: 100 },
-  place100: { name: 'Place 100 blocks', stat: 'placed', goal: 100, cash: 120, xp: 50 },
-  top3x2: { name: 'Finish top 3 twice', stat: 'top3', goal: 2, cash: 150, xp: 60 },
+  kills15: { name: 'Get 15 kills', stat: 'kills', goal: 15, cash: 320, xp: 130 },
+  ffa5: { name: 'Get 5 kills in Spirelands', stat: 'ffaKills', goal: 5, cash: 180, xp: 70 },
+  hits150: { name: 'Land 150 hits', stat: 'hits', goal: 150, cash: 140, xp: 55 },
+  combo8: { name: 'Hit an 8-hit combo', stat: 'combo8', goal: 1, cash: 160, xp: 60 },
 }
 export const QUEST_IDS = Object.keys(QUESTS)
 export const QUESTS_PER_DAY = 3
-
-/** How many maps each map vote offers (random, never the one just played). */
-export const MAP_CHOICES = 6
 
 // --- Cosmetics and cases ----------------------------------------------------------------
 
@@ -318,29 +383,31 @@ export const RARITIES = {
 export const RARITY_ORDER = Object.keys(RARITIES)
 
 /**
- * Capes, drawn from `pattern` (client/src/game/art/capes.js). `none` is everyone's
- * from the start.
+ * Kill effects: the burst where your victim stood, in your colours and style (`pattern`,
+ * see client/src/game/art/killfx.js). They live in the save's old cape slots (`capes`,
+ * `cape`, the 'cape' case and Gems skus), so everything players already own carries
+ * over. `none` is everyone's from the start.
  */
 export const CAPES = {
-  none: { name: 'No Cape', rarity: 'common', pattern: 'none', owned: true },
-  crimson: { name: 'Crimson Cape', rarity: 'common', pattern: 'solid', colors: ['#c72a2a', '#7a1414'] },
-  ocean: { name: 'Ocean Cape', rarity: 'common', pattern: 'solid', colors: ['#2a7fd4', '#134a80'] },
-  leaf: { name: 'Leaf Cape', rarity: 'common', pattern: 'solid', colors: ['#3fae3a', '#1f6b1d'] },
-  checker: { name: 'Checker Cape', rarity: 'uncommon', pattern: 'checker', colors: ['#f2f2f2', '#262626'] },
-  pixel: { name: 'Pixel Cape', rarity: 'uncommon', pattern: 'pixels', colors: ['#ff5d5d', '#5db8ff', '#ffe15d', '#6bff6b'] },
-  ghost: { name: 'Ghost Cape', rarity: 'uncommon', pattern: 'ghost', colors: ['#c9ccd1', '#1e1e1e'] },
-  lucky: { name: 'Lucky Cape', rarity: 'rare', pattern: 'lucky', colors: ['#ffc928', '#ffffff'] },
-  mega: { name: 'Mega Lucky Cape', rarity: 'rare', pattern: 'lucky', colors: ['#9b3df0', '#ffffff'] },
-  smile: { name: 'Smiley Cape', rarity: 'rare', pattern: 'face', colors: ['#3bd25a', '#0d2b12'] },
-  flame: { name: 'Flame Cape', rarity: 'epic', pattern: 'flame', colors: ['#ffe14d', '#ff7a1a', '#c21d0e'] },
-  galaxy: { name: 'Galaxy Cape', rarity: 'epic', pattern: 'stars', colors: ['#1a1440', '#ffffff', '#b98cff'] },
-  moon: { name: 'Blood Moon Cape', rarity: 'legendary', pattern: 'moon', colors: ['#2a0b12', '#ff3b3b'] },
-  rainbow: { name: 'Rainbow Cape', rarity: 'legendary', pattern: 'rainbow', colors: [] },
-  void: { name: 'Void Cape', rarity: 'mythic', pattern: 'void', colors: ['#050008', '#d14dff', '#5b1aa6'] },
+  none: { name: 'No Kill Effect', rarity: 'common', pattern: 'none', owned: true },
+  crimson: { name: 'Crimson Burst', rarity: 'common', pattern: 'solid', colors: ['#ff3b3b', '#9a1414'] },
+  ocean: { name: 'Ocean Burst', rarity: 'common', pattern: 'solid', colors: ['#3fa2ff', '#134a80'] },
+  leaf: { name: 'Leaf Burst', rarity: 'common', pattern: 'solid', colors: ['#5ee26a', '#1f6b1d'] },
+  checker: { name: 'Checker Pop', rarity: 'uncommon', pattern: 'checker', colors: ['#f2f2f2', '#262626'] },
+  pixel: { name: 'Pixel Party', rarity: 'uncommon', pattern: 'pixels', colors: ['#ff5d5d', '#5db8ff', '#ffe15d', '#6bff6b'] },
+  ghost: { name: 'Ghost Puff', rarity: 'uncommon', pattern: 'ghost', colors: ['#e6e9f0', '#8b8f99'] },
+  lucky: { name: 'Lucky Sparks', rarity: 'rare', pattern: 'lucky', colors: ['#ffc928', '#ffffff'] },
+  mega: { name: 'Mega Sparks', rarity: 'rare', pattern: 'lucky', colors: ['#b45cff', '#ffffff'] },
+  smile: { name: 'Smiley Pop', rarity: 'rare', pattern: 'face', colors: ['#3bd25a', '#ffe14d'] },
+  flame: { name: 'Flame Burst', rarity: 'epic', pattern: 'flame', colors: ['#ffe14d', '#ff7a1a', '#c21d0e'] },
+  galaxy: { name: 'Galaxy Swirl', rarity: 'epic', pattern: 'stars', colors: ['#5a3cc8', '#ffffff', '#b98cff'] },
+  moon: { name: 'Blood Moon', rarity: 'legendary', pattern: 'moon', colors: ['#2a0b12', '#ff3b3b'] },
+  rainbow: { name: 'Rainbow Ring', rarity: 'legendary', pattern: 'rainbow', colors: [] },
+  void: { name: 'Void Implosion', rarity: 'mythic', pattern: 'void', colors: ['#1a0026', '#d14dff', '#5b1aa6'] },
   // Gem exclusives: never in a cash case.
-  phoenix: { name: 'Phoenix Cape', rarity: 'legendary', pattern: 'flame', colors: ['#e6fbff', '#4fc3ff', '#1a4fd1'], gemOnly: true },
-  royal: { name: 'Royal Cape', rarity: 'legendary', pattern: 'moon', colors: ['#1a0f2e', '#ffd23b'], gemOnly: true },
-  aurora: { name: 'Aurora Cape', rarity: 'mythic', pattern: 'stars', colors: ['#062a2a', '#7affd1', '#3fd2ff'], gemOnly: true },
+  phoenix: { name: 'Phoenix Fire', rarity: 'legendary', pattern: 'flame', colors: ['#e6fbff', '#4fc3ff', '#1a4fd1'], gemOnly: true },
+  royal: { name: 'Royal Crown', rarity: 'legendary', pattern: 'moon', colors: ['#1a0f2e', '#ffd23b'], gemOnly: true },
+  aurora: { name: 'Aurora Wave', rarity: 'mythic', pattern: 'stars', colors: ['#0a4a4a', '#7affd1', '#3fd2ff'], gemOnly: true },
 }
 
 /** Sword skins recolour every sword you hold: blade, edge, guard, handle. */
@@ -364,10 +431,10 @@ export const SWORD_SKINS = {
 
 /** Cases, bought with cash in the lobby. */
 export const CASES = {
-  cape: { name: 'Cape Case', price: 400, kind: 'cape', color: '#ffb52e' },
+  cape: { name: 'Kill FX Case', price: 400, kind: 'cape', color: '#ffb52e' },
   sword: { name: 'Sword Case', price: 600, kind: 'sword', color: '#3fa2ff' },
   // Bought with Gems (GEM_PRODUCTS): Epic or better, guaranteed.
-  mythic_cape: { name: 'Mythic Cape Case', price: 0, kind: 'cape', color: '#ff4f6d', gems: true, minRarity: 'epic' },
+  mythic_cape: { name: 'Mythic Kill FX Case', price: 0, kind: 'cape', color: '#ff4f6d', gems: true, minRarity: 'epic' },
   mythic_sword: { name: 'Mythic Sword Case', price: 0, kind: 'sword', color: '#ff4f6d', gems: true, minRarity: 'epic' },
 }
 /** A duplicate gives this share of the case price back. */
@@ -414,20 +481,20 @@ export const DAILY_REWARDS = [100, 150, 200, 250, 300, 400, 600]
  */
 export const GEM_PRODUCTS = {
   // Exclusives: only with Gems.
-  cape_aurora: { group: 'exclusive', name: 'Aurora Cape', blurb: 'Mythic. Only with Gems.', icon: 'cape', grant: { cape: 'aurora' } },
-  cape_phoenix: { group: 'exclusive', name: 'Phoenix Cape', blurb: 'Legendary blue fire. Only with Gems.', icon: 'cape', grant: { cape: 'phoenix' } },
-  cape_royal: { group: 'exclusive', name: 'Royal Cape', blurb: 'Legendary. Only with Gems.', icon: 'cape', grant: { cape: 'royal' } },
+  cape_aurora: { group: 'exclusive', name: 'Aurora Wave', blurb: 'Mythic kill effect. Only with Gems.', icon: 'star', grant: { cape: 'aurora' } },
+  cape_phoenix: { group: 'exclusive', name: 'Phoenix Fire', blurb: 'Legendary blue-fire kill effect. Only with Gems.', icon: 'star', grant: { cape: 'phoenix' } },
+  cape_royal: { group: 'exclusive', name: 'Royal Crown', blurb: 'Legendary kill effect. Only with Gems.', icon: 'star', grant: { cape: 'royal' } },
   sword_celestial: { group: 'exclusive', name: 'Celestial Sword', blurb: 'Mythic skin for every sword. Only with Gems.', icon: 'sword', grant: { sword: 'celestial' } },
   sword_dragon: { group: 'exclusive', name: 'Dragonfang Sword', blurb: 'Legendary skin. Only with Gems.', icon: 'sword', grant: { sword: 'dragon' } },
   sword_obsidian: { group: 'exclusive', name: 'Magma Obsidian Sword', blurb: 'Legendary skin. Only with Gems.', icon: 'sword', grant: { sword: 'obsidian' } },
   // Cases and boosts.
-  mythic_cape_case: { group: 'cases', name: 'Mythic Cape Case', blurb: 'Epic, Legendary or Mythic cape - guaranteed', icon: 'case', grant: { case: 'mythic_cape' } },
+  mythic_cape_case: { group: 'cases', name: 'Mythic Kill FX Case', blurb: 'Epic, Legendary or Mythic kill effect - guaranteed', icon: 'case', grant: { case: 'mythic_cape' } },
   mythic_sword_case: { group: 'cases', name: 'Mythic Sword Case', blurb: 'Epic, Legendary or Mythic sword skin - guaranteed', icon: 'case', grant: { case: 'mythic_sword' } },
-  vip: { group: 'boosts', name: 'VIP', blurb: 'x2 cash from every round and a crown on your name, forever', icon: 'crown', grant: { pass: 'vip' } },
-  xp_pass: { group: 'boosts', name: 'XP Pass', blurb: '+50% XP from every round, forever', icon: 'star', grant: { pass: 'xp' } },
+  vip: { group: 'boosts', name: 'VIP', blurb: 'x2 cash from every duel and a crown on your name, forever', icon: 'crown', grant: { pass: 'vip' } },
+  xp_pass: { group: 'boosts', name: 'XP Pass', blurb: '+50% XP from every duel, forever', icon: 'star', grant: { pass: 'xp' } },
   xp_boost: { group: 'boosts', name: 'XP Boost', blurb: 'Double XP for 1 hour', icon: 'star', grant: { xpBoostMs: 60 * 60 * 1000 } },
   quest_refresh: { group: 'boosts', name: 'New Quests', blurb: "Swap today's quests for three new ones", icon: 'star', grant: { questRefresh: true } },
-  starter: { group: 'cash', name: 'Starter Pack', blurb: 'Flame Cape + Inferno sword skin + 1,000 cash', icon: 'gift', grant: { cash: 1000, cape: 'flame', sword: 'inferno' } },
+  starter: { group: 'cash', name: 'Starter Pack', blurb: 'Flame Burst kill effect + Inferno sword skin + 1,000 cash', icon: 'gift', grant: { cash: 1000, cape: 'flame', sword: 'inferno' } },
   cash_small: { group: 'cash', name: 'Bag of Cash', blurb: '+1,500 cash', icon: 'cash', grant: { cash: 1500 } },
   cash_big: { group: 'cash', name: 'Vault of Cash', blurb: '+8,000 cash', icon: 'cash', grant: { cash: 8000 } },
 }
@@ -444,12 +511,12 @@ export const AD_REWARDS = {
 }
 
 /** Quick chat: what a player can say with one key (works offline and for guests too). */
-export const QUICK_CHAT = ['GG!', 'Nice one!', 'Help!', 'Team up?', 'Run!', 'Oops!', "Let's go!", '😂', '🔥', '👋']
+export const QUICK_CHAT = ['GG!', 'Nice one!', 'Rematch?', 'Good fight!', 'Close one!', 'Oops!', "Let's go!", '😂', '🔥', '👋']
 /** At most one quick chat line per this many ms. */
 export const QUICK_CHAT_MS = 1500
 
-/** Names for bots that fill empty islands. */
+/** Names for bots (duel opponents when nobody else is queued, and Spirelands regulars). */
 export const BOT_NAMES = [
-  'BlockyBen', 'PixelPia', 'LuckyLuca', 'CraftyCam', 'SkySam', 'NoobNoah', 'MinerMia', 'TNTtom',
-  'BridgeBob', 'DiamondDee', 'CubeKai', 'LavaLeo', 'ZippyZoe', 'StackSteve', 'AppleAva', 'PearlPip',
+  'VektorVibe', 'PixelPia', 'StrafeLuca', 'ComboCam', 'SkySam', 'NoobNoah', 'BlockMia', 'ClutchTom',
+  'BridgeBob', 'DiamondDee', 'CubeKai', 'MaceLeo', 'ZippyZoe', 'StackSteve', 'AppleAva', 'PearlPip',
 ]

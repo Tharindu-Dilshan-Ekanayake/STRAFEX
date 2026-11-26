@@ -2,62 +2,65 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { summarize } from '../../shared/analytics.js'
-import { ROUND } from '../../shared/balance.js'
+import { DUEL } from '../../shared/balance.js'
 import { GameHost } from '../../shared/host.js'
 import { mulberry32 } from '../../shared/rng.js'
 import { closeStorage, openStorage, recentEvents, recordEvent } from '../src/db.js'
 
-test('a round reports how it went, anonymously, and the summary reads it', () => {
+test('duels and Spirelands report how they went, anonymously, and the summary reads it', () => {
   let t = 1_000_000
   const events = []
   const host = new GameHost({ send: () => {}, onAnalytics: (type, data) => events.push({ type, at: t, data }), now: () => t, random: mulberry32(11), log: () => {} })
-  host.join('p', 'Pat')
-  host.message('p', 'tut', { step: 1 })
-  host.message('p', 'tut', { step: 1 })
-  host.message('p', 'tut', { step: 9 })
-  const step = () => {
-    t += 50
-    host.tick(0.05)
+  const step = (ms) => {
+    for (let i = 0; i < ms; i += 50) {
+      t += 50
+      host.tick(0.05)
+    }
   }
-  while (host.phase !== 'fight') step()
-  for (let i = 0; i < 100; i += 1) step()
-  host.kill(host.entOf('p'), null, 'void')
-  while (host.phase === 'fight') step()
+  host.join('p', 'Pat')
+  host.message('p', 'queue', { mode: 'sword' })
+  step(DUEL.soloBotMs + DUEL.voteMs + DUEL.countdownMs + 400)
+  const me = host.entOf('p')
+  const arena = host.arenas.get(me.arena)
+  // The bot wins three rounds.
+  const bot = host.ents.get(arena.fighters[1])
+  for (let r = 0; r < 3; r += 1) {
+    host.kill(arena, me, bot, 'melee')
+    step(DUEL.betweenMs + DUEL.countdownMs + 200)
+  }
+  step(DUEL.endMs + 200)
+  // Then Spirelands, a death to the void, and away.
+  host.message('p', 'ffa', {})
+  host.message('p', 'kit', { mode: 'mace' })
+  step(500)
+  host.kill(host.arenas.get('ffa'), me, null, 'void')
   host.leave('p')
-  // Walking out mid-round still counts that round.
   host.join('q', 'Quinn')
-  while (host.phase !== 'fight') step()
   host.leave('q')
 
   const types = events.map((e) => e.type)
-  assert.deepEqual(types.filter((x) => x === 'tutorial').length, 1, 'each step once, junk ignored')
-  assert.ok(types.includes('round') && types.includes('player_round') && types.includes('leave'))
-  const round = events.find((e) => e.type === 'round').data
-  assert.ok(round.durationMs > 0 && round.deaths.void >= 1)
-  const mine = events.find((e) => e.type === 'player_round').data
-  assert.equal(mine.died, 'void')
-  assert.equal(mine.byPlayer, false)
+  assert.ok(types.includes('duel_start') && types.includes('duel_end') && types.includes('ffa_death') && types.includes('leave'))
+  const end = events.find((e) => e.type === 'duel_end').data
+  assert.equal(end.winnerBot, true)
+  assert.equal(end.rounds, 3)
   // Nothing personal in any event.
   assert.ok(!JSON.stringify(events).includes('Pat') && !JSON.stringify(events).includes('Quinn'))
 
   const s = summarize(events)
-  // Quinn walking out ends that round too (no real players left in it).
-  assert.equal(s.rounds.count, 2)
-  assert.equal(s.players.rounds, 2)
+  assert.equal(s.duels.started, 1)
+  assert.equal(s.duels.finished, 1)
+  assert.equal(s.duels.botWinPct, 100)
+  assert.equal(s.spirelands.byCause.void, 1)
   assert.equal(s.sessions.count, 2)
-  assert.equal(s.sessions.avgRounds, 1)
-  assert.equal(s.sessions.quitWhere['match/fight'], 1)
-  assert.equal(s.tutorial.reachedStep[1], 1)
-  assert.ok(s.deaths.total >= 1)
-  assert.ok(s.rounds.avgLengthS <= ROUND.fightMs / 1000)
+  assert.equal(s.sessions.leftWithoutPlayingPct, 50)
 })
 
 test('events are stored and read back', async () => {
   await openStorage({ path: ':memory:', mongoUri: '' })
-  recordEvent('round', { durationMs: 1000, deaths: { lava: 2 } })
-  recordEvent('leave', { zone: 'lobby', phase: 'waiting', sessionMs: 5000, rounds: 0 })
+  recordEvent('duel_end', { durationMs: 1000, rounds: 2, forfeit: false })
+  recordEvent('leave', { zone: 'lobby', sessionMs: 5000, rounds: 0 })
   const back = await recentEvents(1)
   assert.equal(back.length, 2)
-  assert.deepEqual(back.find((e) => e.type === 'round').data.deaths, { lava: 2 })
+  assert.equal(back.find((e) => e.type === 'duel_end').data.rounds, 2)
   await closeStorage()
 })

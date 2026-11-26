@@ -17,7 +17,8 @@ export const TILE_ORDER = [
   'leaves', 'sand', 'sandstone', 'sandstone_top', 'snow', 'snow_side', 'ice', 'wool_white', 'wool_red', 'wool_blue',
   'wool_yellow', 'candy_pink', 'candy_stripe', 'frosting_top', 'frosting_side', 'glass', 'cage', 'lucky', 'lucky_rare', 'gold',
   'darkstone', 'tnt_side', 'tnt_top', 'lamp', 'cactus_side', 'cactus_top', 'path_top', 'flower_red', 'flower_yellow', 'tall_grass',
-  'water', 'quartz', 'quartz_top',
+  'water', 'quartz', 'quartz_top', 'obsidian', 'crystal', 'corestone', 'clay_orange', 'clay_red', 'mossy_bricks', 'slate',
+  'pad_top', 'pad_side', 'azure', 'finish_top', 'hay_top', 'hay_side', 'mushroom', 'lantern', 'lantern_top',
 ]
 const tileIndex = new Map(TILE_ORDER.map((name, i) => [name, i]))
 

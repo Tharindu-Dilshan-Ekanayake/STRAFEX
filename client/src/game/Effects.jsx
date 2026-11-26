@@ -14,26 +14,25 @@ import {
 } from 'three'
 
 import { PROJECTILES } from '@shared/balance'
-import { isLucky, isSolidBlock } from '@shared/voxel'
+import { isSolidBlock } from '@shared/voxel'
 
 import { getQuality } from '../store/quality'
 import { blockColor } from './art/atlas'
-import { itemModel } from './art/items'
+import { killFxBurst } from './art/killfx'
 import { runtime } from './runtime'
 import { worldState } from './world'
 
 /**
  * Short-lived effects, all pooled (fixed-size instanced meshes, nothing allocated while
- * playing): block chips, lucky-block bursts, hit sparks, explosions, lit TNT, lightning,
- * thrown things and arrows, and the sparkle over lucky blocks. Particles and sparkles
- * are skipped on the LOW preset.
+ * playing): block chips, hit sparks and crits, shield blocks, revive charms, mace
+ * smashes, gust bursts, potion splashes, explosions, and thrown things and arrows.
+ * Particles are skipped on the LOW preset (the burst flashes and projectiles stay:
+ * they're gameplay).
  */
 
 const MAX_PARTICLES = 220
 const MAX_PROJ = 32
-const MAX_TNT = 12
-const MAX_BOOMS = 4
-const MAX_SPARKLES = 96
+const MAX_BOOMS = 6
 const MAX_POPS = 12
 const POP_S = 0.22
 
@@ -41,7 +40,6 @@ let vignette = null
 let lastVignette = -1
 const tmp = new Object3D()
 const col = new Color()
-const WHITE = new Color('#ffffff')
 
 /** Pool of particle state, parallel to the instanced mesh. */
 function makeParticles() {
@@ -56,19 +54,12 @@ export default function Effects() {
     particles.instanceMatrix.setUsage(DynamicDrawUsage)
     particles.frustumCulled = false
     particles.count = 0
-    const sparkles = new InstancedMesh(cube, new MeshBasicMaterial({ color: '#fff4a8', blending: AdditiveBlending, transparent: true, depthWrite: false }), MAX_SPARKLES)
-    sparkles.frustumCulled = false
-    sparkles.count = 0
     const projMeshes = Array.from({ length: MAX_PROJ }, () => {
       const m = new Mesh(cube, new MeshBasicMaterial({ color: '#ffffff' }))
       m.visible = false
       group.add(m)
       return m
     })
-    const tntModel = itemModel('tnt')
-    const tnt = new InstancedMesh(tntModel.geometry, tntModel.material, MAX_TNT)
-    tnt.frustumCulled = false
-    tnt.count = 0
     const booms = Array.from({ length: MAX_BOOMS }, () => {
       const m = new Mesh(new SphereGeometry(1, 12, 8), new MeshBasicMaterial({ color: '#fff1c4', transparent: true, blending: AdditiveBlending, depthWrite: false }))
       m.visible = false
@@ -82,22 +73,15 @@ export default function Effects() {
     pops.frustumCulled = false
     pops.count = 0
     group.add(pops)
-    const bolt = new Mesh(new BoxGeometry(0.35, 60, 0.35), new MeshBasicMaterial({ color: '#e8f4ff', transparent: true, blending: AdditiveBlending, depthWrite: false }))
-    bolt.visible = false
-    group.add(particles, sparkles, tnt, bolt)
+    group.add(particles)
     return {
       group,
       particles,
       parts: makeParticles(),
-      sparkles,
       projMeshes,
       projs: Array.from({ length: MAX_PROJ }, () => ({ id: 0, kind: '', x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, alive: false, stuck: 0 })),
-      tnt,
-      tnts: [],
       booms,
       boomState: booms.map(() => ({ t: 0, r: 1 })),
-      bolt,
-      boltUntil: 0,
       nextPart: 0,
       digChipsAt: 0,
       pops,
@@ -115,15 +99,12 @@ export default function Effects() {
     () => () => {
       pools.particles.geometry.dispose()
       pools.particles.material.dispose()
-      pools.sparkles.material.dispose()
       pools.pops.material.dispose()
       for (const m of pools.projMeshes) m.material.dispose()
       for (const m of pools.booms) {
         m.geometry.dispose()
         m.material.dispose()
       }
-      pools.bolt.geometry.dispose()
-      pools.bolt.material.dispose()
     },
     [pools],
   )
@@ -134,6 +115,16 @@ export default function Effects() {
     const q = getQuality()
     const P = pools
 
+    /** A bright expanding shell (explosions, bursts): pooled, shown on every preset. */
+    const flash = (x, y, z, r, color) => {
+      const i = P.boomState.findIndex((b) => b.t <= 0)
+      const k = i >= 0 ? i : 0
+      P.boomState[k].t = 0.35
+      P.boomState[k].r = r
+      P.booms[k].position.set(x, y, z)
+      P.booms[k].material.color.set(color)
+      P.booms[k].visible = true
+    }
     const spawn = (x, y, z, color, count, speed = 3, size = 0.12, life = 0.7, gravity = 18) => {
       if (!q.particles) return
       for (let i = 0; i < count; i += 1) {
@@ -160,9 +151,48 @@ export default function Effects() {
         case 'break':
           spawn(fx.x + 0.5, fx.y + 0.5, fx.z + 0.5, blockColor(fx.id), fx.quiet ? 6 : 12, 3.5)
           break
-        case 'pop':
-          spawn(fx.x + 0.5, fx.y + 0.5, fx.z + 0.5, fx.bad ? [0.3, 0.3, 0.3] : fx.rare ? [0.75, 0.4, 1] : [1, 0.85, 0.2], 24, 6, 0.14, 0.9, 10)
-          spawn(fx.x + 0.5, fx.y + 0.5, fx.z + 0.5, [1, 1, 1], 10, 5, 0.08, 0.6, 6)
+        case 'kfx': {
+          // The killer's kill effect: a burst in its colours, and its flash (every preset).
+          const b = killFxBurst(fx.fx)
+          if (!b) break
+          const per = Math.ceil(b.count / b.colors.length)
+          for (const c of b.colors) spawn(fx.x, fx.y + 1, fx.z, c, per, b.speed, 0.16, 1.1, b.gravity)
+          flash(fx.x, fx.y + 1, fx.z, 1.9, b.flash)
+          break
+        }
+        case 'pad':
+          spawn(fx.x, fx.y + 0.1, fx.z, [0.4, 1, 0.5], 12, 3, 0.1, 0.5, 6)
+          break
+        case 'crit':
+          spawn(fx.x, fx.y, fx.z, [1, 1, 0.85], 10, 4, 0.08, 0.5, 6)
+          break
+        case 'blocked':
+          spawn(fx.x, fx.y, fx.z, [0.85, 0.65, 0.4], 6, 2.5, 0.08, 0.35, 12)
+          break
+        case 'charm':
+          // A burst of gold and green, rising.
+          spawn(fx.x, fx.y, fx.z, [1, 0.85, 0.25], 26, 5, 0.14, 1.2, -3)
+          spawn(fx.x, fx.y, fx.z, [0.35, 1, 0.5], 18, 4, 0.12, 1.1, -2)
+          flash(fx.x, fx.y, fx.z, 1.6, '#fff2a0')
+          break
+        case 'smash': {
+          // The mace lands: a ring of dust and stone chips.
+          const n = fx.big ? 18 : 10
+          for (let k = 0; k < n; k += 1) {
+            const a = (k / n) * Math.PI * 2
+            spawn(fx.x + Math.cos(a) * 0.8, fx.y + 0.15, fx.z + Math.sin(a) * 0.8, [0.6, 0.58, 0.55], 1, 3, 0.16, 0.6, 14)
+          }
+          flash(fx.x, fx.y + 0.3, fx.z, fx.big ? 2.2 : 1.4, '#e8e2d6')
+          break
+        }
+        case 'gust':
+          spawn(fx.x, fx.y, fx.z, [0.9, 0.97, 1], fx.small ? 6 : 22, fx.small ? 2 : 6, 0.12, 0.6, -2)
+          if (!fx.small) flash(fx.x, fx.y, fx.z, 2.6, '#cfeeff')
+          break
+        case 'splash':
+          col.set(fx.color || '#ff4f6d')
+          spawn(fx.x, fx.y, fx.z, [col.r, col.g, col.b], 24, 4, 0.1, 0.8, 8)
+          flash(fx.x, fx.y, fx.z, 2, fx.color || '#ff4f6d')
           break
         case 'place': {
           const ps = P.popState[P.nextPop]
@@ -187,27 +217,10 @@ export default function Effects() {
         case 'hit':
           spawn(fx.x, fx.y, fx.z, [0.9, 0.1, 0.1], 7, 2.5, 0.09, 0.45)
           break
-        case 'boom': {
+        case 'boom':
           spawn(fx.x, fx.y, fx.z, [0.45, 0.45, 0.45], 30, 9, 0.3, 1.2, 4)
-          spawn(fx.x, fx.y, fx.z, [1, 0.55, 0.1], 20, 7, 0.22, 0.6, 2)
-          const i = P.boomState.findIndex((b) => b.t <= 0)
-          const k = i >= 0 ? i : 0
-          P.boomState[k].t = 0.35
-          P.boomState[k].r = fx.r
-          P.booms[k].position.set(fx.x, fx.y, fx.z)
-          P.booms[k].visible = true
-          // The TNT that blew is no longer lit.
-          for (const t of P.tnts) if (Math.abs(t.x + 0.5 - fx.x) < 0.6 && Math.abs(t.y + 0.5 - fx.y) < 0.6 && Math.abs(t.z + 0.5 - fx.z) < 0.6) t.until = 0
-          break
-        }
-        case 'tnt':
-          if (P.tnts.length < MAX_TNT) P.tnts.push({ x: fx.x, y: fx.y, z: fx.z, until: now + fx.fuse + 150 })
-          break
-        case 'bolt':
-          P.bolt.position.set(fx.x, fx.y + 30, fx.z)
-          P.bolt.visible = true
-          P.boltUntil = now + 260
-          spawn(fx.x, fx.y + 0.2, fx.z, [0.85, 0.95, 1], 16, 5, 0.1, 0.5)
+          spawn(fx.x, fx.y, fx.z, [1, 0.45, 0.95], 20, 7, 0.22, 0.6, 2)
+          flash(fx.x, fx.y, fx.z, fx.r, '#ffd6f6')
           break
         case 'proj': {
           const slot = P.projs.find((p) => !p.alive) || P.projs[0]
@@ -222,7 +235,7 @@ export default function Effects() {
             p.z = fx.z
             if (p.kind === 'arrow') p.stuck = now + 1500
             else p.alive = false
-            spawn(fx.x, fx.y, fx.z, p.kind === 'pearl' ? [0.4, 1, 0.85] : [1, 1, 1], 8, 2.5, 0.08, 0.5)
+            if (p.kind !== 'gust' && p.kind !== 'splash') spawn(fx.x, fx.y, fx.z, p.kind === 'pearl' ? [0.4, 1, 0.85] : [1, 1, 1], 8, 2.5, 0.08, 0.5)
           }
           break
         }
@@ -324,34 +337,11 @@ export default function Effects() {
         if (!p.stuck) mesh.lookAt(p.x + p.vx, p.y + p.vy, p.z + p.vz)
         mesh.material.color.set('#c9b48a')
       } else {
-        mesh.scale.setScalar(0.25)
-        mesh.rotation.set(0, 0, 0)
-        mesh.material.color.set(p.kind === 'pearl' ? '#1f9c85' : '#ffffff')
+        mesh.scale.setScalar(p.kind === 'gust' ? 0.36 : 0.25)
+        mesh.rotation.set(now / 120, now / 90, 0)
+        mesh.material.color.set(p.kind === 'pearl' ? '#1f9c85' : p.kind === 'gust' ? '#cfeeff' : p.kind === 'splash' ? '#ff4f6d' : '#ffffff')
       }
     })
-
-    // Lit TNT: a flashing cube until it blows.
-    let tn = 0
-    for (let i = P.tnts.length - 1; i >= 0; i -= 1) {
-      const t = P.tnts[i]
-      if (now > t.until) {
-        P.tnts.splice(i, 1)
-        continue
-      }
-      const left = t.until - now
-      const swell = 1 + Math.max(0, 1 - left / 400) * 0.15
-      tmp.position.set(t.x + 0.5, t.y + 0.5, t.z + 0.5)
-      tmp.rotation.set(0, 0, 0)
-      tmp.scale.setScalar(1.01 * swell)
-      tmp.updateMatrix()
-      P.tnt.setMatrixAt(tn, tmp.matrix)
-      const flash = Math.floor(now / (left < 800 ? 90 : 200)) % 2
-      P.tnt.setColorAt(tn, flash ? WHITE : col.setRGB(2.2, 2.2, 2.2))
-      tn += 1
-    }
-    P.tnt.count = tn
-    P.tnt.instanceMatrix.needsUpdate = true
-    if (P.tnt.instanceColor) P.tnt.instanceColor.needsUpdate = true
 
     // Explosion flashes.
     P.booms.forEach((m, i) => {
@@ -365,37 +355,6 @@ export default function Effects() {
       m.scale.setScalar(b.r * (0.4 + k * 0.9))
       m.material.opacity = Math.max(0, 1 - k)
     })
-
-    // Lightning.
-    if (P.bolt.visible) {
-      P.bolt.material.opacity = Math.floor(now / 50) % 2 ? 1 : 0.4
-      if (now > P.boltUntil) P.bolt.visible = false
-    }
-
-    // Sparkles drifting up around each lucky block still standing.
-    let sn = 0
-    const gen = worldState.gen
-    if (q.sparkles && gen && worldState.kind === 'match') {
-      const cx = camera.position.x
-      const cz = camera.position.z
-      for (let i = 0; i < gen.lucky.length && sn < MAX_SPARKLES - 2; i += 1) {
-        const l = gen.lucky[i]
-        if (Math.hypot(l.x - cx, l.z - cz) > 45) continue
-        if (!isLucky(worldState.world.get(l.x, l.y, l.z))) continue
-        for (let k = 0; k < 2; k += 1) {
-          const t = (now / 1400 + i * 0.37 + k * 0.5) % 1
-          const a = i * 2.1 + k * 3.1 + t * 2
-          tmp.position.set(l.x + 0.5 + Math.cos(a) * 0.75, l.y + t * 1.6, l.z + 0.5 + Math.sin(a) * 0.75)
-          tmp.rotation.set(t * 4, t * 3, 0)
-          tmp.scale.setScalar(0.09 * Math.sin(t * Math.PI))
-          tmp.updateMatrix()
-          P.sparkles.setMatrixAt(sn, tmp.matrix)
-          sn += 1
-        }
-      }
-    }
-    P.sparkles.count = sn
-    P.sparkles.instanceMatrix.needsUpdate = true
 
     // A red edge to the screen right after a hit (a DOM element, set directly).
     vignette ||= document.getElementById('hurt-vignette')

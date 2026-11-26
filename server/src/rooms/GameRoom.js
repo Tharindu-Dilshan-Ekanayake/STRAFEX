@@ -11,10 +11,11 @@ import { getLeaderboards } from '../leaderboards.js'
 import { activePlayers, liveRooms } from '../registry.js'
 import { GameState, PlayerState } from './schema.js'
 
-const MAX_CLIENTS = 8
+/** One server: a shared lobby, many duels at once, and Spirelands. */
+const MAX_CLIENTS = 50
 const RECONNECT_SECONDS = 20
 const AUTOSAVE_MS = 30_000
-/** The round simulation: bots, projectiles, lava (GameHost). */
+/** The simulation: duels, Spirelands, bots, projectiles (GameHost). */
 const SIM_HZ = GameHost.SIM_HZ
 /** Close code used when the same player joins somewhere else (4000-4010 are Colyseus's own). */
 const DUPLICATE_LOGIN = 4100
@@ -23,8 +24,8 @@ const POD = process.env.POD_NAME || `local-${process.pid}`
 /** Least time between two 'gemsCheck's from one player (each is a database query). */
 const GEMS_CHECK_MS = 2000
 
-/** Round messages the host handles; everything else is a lobby/profile action. */
-const HOST_MESSAGES = new Set(['tut', 'pos', 'sel', 'dig', 'break', 'place', 'attack', 'use', 'swing', 'vote', 'afk', 'spectate', 'lobby', 'look', 'qc', 'voteMap', 'voteBots', 'joinRound'])
+/** Game messages the host handles; everything else is a lobby/profile action. */
+const HOST_MESSAGES = new Set(['pos', 'sel', 'dig', 'break', 'place', 'attack', 'use', 'block', 'swing', 'lobby', 'look', 'qc', 'queue', 'unqueue', 'voteMap', 'requeue', 'ffa', 'kit', 'parkour', 'swap', 'swapHands'])
 /** Profile actions the session handles. */
 const SESSION_MESSAGES = new Set(['openCase', 'equip', 'claimDaily', 'welcomeGift', 'tutorialDone'])
 
@@ -40,9 +41,10 @@ const cleanName = (name) =>
     .slice(0, 20) || 'Player'
 
 /**
- * One server: up to 8 players sharing a lobby and its rounds. The rounds themselves run
- * in GameHost (shared with the offline game); this room adds networking, identity,
- * saves, Boxity rewards, and the small synced state the platform reads (who's here).
+ * One server: up to 50 players sharing a lobby, the duel queues, every duel in progress
+ * and Spirelands. The game itself runs in GameHost (shared with the offline game); this
+ * room adds networking, identity, saves, Boxity rewards, and the small synced state the
+ * platform reads (who's here).
  */
 export class GameRoom extends Room {
   maxClients = MAX_CLIENTS
@@ -70,6 +72,10 @@ export class GameRoom extends Room {
         if (!member || member.kicked) return
         member.session.awardRound(result)
         this.syncPlayer(sid)
+      },
+      onParkour: (sid, ms) => {
+        const member = this.members.get(sid)
+        if (member && !member.kicked) member.session.parkour(ms)
       },
     })
     this.setSimulationInterval((dt) => this.tick(dt / 1000), 1000 / SIM_HZ)
@@ -160,7 +166,7 @@ export class GameRoom extends Room {
 
   async onLeave(client) {
     const member = this.members.get(client.sessionId)
-    // The host first: leaving mid-round still pays out the round so far.
+    // The host first: leaving mid-duel is a forfeit, a Spirelands life is paid out.
     this.host.leave(client.sessionId)
     this.state.players.delete(client.sessionId)
     if (member) {

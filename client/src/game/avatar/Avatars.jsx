@@ -1,14 +1,13 @@
 import { useFrame } from '@react-three/fiber'
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BoxGeometry, Mesh, MeshLambertMaterial, Vector3 } from 'three'
+import { Mesh, Vector3 } from 'three'
 
-import { LOBBY_SWORD } from '@shared/balance'
+import { LOBBY_SWORD, OFFHAND } from '@shared/balance'
 
 import { useBloxity } from '../../bloxity/BloxityContext'
 import ErrorBoundary from '../../ui/ErrorBoundary'
-import { getGame, useGame } from '../../store/game'
+import { getGame } from '../../store/game'
 import { getQuality } from '../../store/quality'
-import { capeUV, getCapeAtlas } from '../art/capes'
 import { itemModel } from '../art/items'
 import { runtime } from '../runtime'
 import BloxityAvatar from './BloxityAvatar'
@@ -17,7 +16,7 @@ import { avatarShown } from './state'
 /**
  * Everyone as their Bloxity avatar: you (seen in third person and in the lobby) and
  * every other player, dressed as their account is - bots wear the base body. Each
- * carries the item in their hand and their cape. Until an avatar has loaded (or if it
+ * carries the item in their hand. Until an avatar has loaded (or if it
  * can't), the blocky stand-in in Characters.jsx shows instead.
  *
  * Which avatars exist is decided four times a second (React state, never from the frame
@@ -55,9 +54,9 @@ export default function Avatars() {
       members = next
       const list = ranked
         .filter(({ r }) => next.has(r.eid))
-        .map(({ r }) => ({ key: `e${r.eid}`, eid: r.eid, lookKey: r.lookKey || '', cape: r.cape || 'none' }))
+        .map(({ r }) => ({ key: `e${r.eid}`, eid: r.eid, lookKey: r.lookKey || '' }))
         .sort((a, c) => a.eid - c.eid)
-      const key = list.map((s) => `${s.key}:${s.lookKey}:${s.cape}`).join('|')
+      const key = list.map((s) => `${s.key}:${s.lookKey}`).join('|')
       if (key !== lastKey) {
         lastKey = key
         setSlots(list)
@@ -72,7 +71,7 @@ export default function Avatars() {
     <>
       <SelfAvatar />
       {slots.map((s) => (
-        <RemoteAvatar key={`${s.key}:${s.lookKey}`} eid={s.eid} lookKey={s.lookKey} capeId={s.cape} />
+        <RemoteAvatar key={`${s.key}:${s.lookKey}`} eid={s.eid} lookKey={s.lookKey} />
       ))}
     </>
   )
@@ -80,11 +79,10 @@ export default function Avatars() {
 
 function SelfAvatar() {
   const { avatar, proportions } = useBloxity()
-  const capeId = useGame((s) => s.profile.cape)
-  return <AvatarSlot id="self" equipped={avatar} proportions={proportions} capeId={capeId} local />
+  return <AvatarSlot id="self" equipped={avatar} proportions={proportions} local />
 }
 
-function RemoteAvatar({ eid, lookKey, capeId }) {
+function RemoteAvatar({ eid, lookKey }) {
   const look = useMemo(() => {
     try {
       return lookKey ? JSON.parse(lookKey) : null
@@ -92,22 +90,12 @@ function RemoteAvatar({ eid, lookKey, capeId }) {
       return null
     }
   }, [lookKey])
-  return <AvatarSlot id={eid} equipped={look?.equipped || null} proportions={look?.proportions || null} capeId={capeId} />
+  return <AvatarSlot id={eid} equipped={look?.equipped || null} proportions={look?.proportions || null} />
 }
 
-/** A thin box with its big faces showing one cell of the cape atlas, hanging from its top. */
-function capeGeometry(id) {
-  const geo = new BoxGeometry(0.56, 0.86, 0.035)
-  geo.translate(0, -0.43, 0)
-  const [u0, v0, du, dv] = capeUV(id)
-  const uv = geo.attributes.uv
-  for (let i = 0; i < uv.count; i += 1) uv.setXY(i, u0 + uv.getX(i) * du, v0 + uv.getY(i) * dv)
-  return geo
-}
-const capeMaterial = new MeshLambertMaterial()
 const _dir = new Vector3()
 
-function AvatarSlot({ id, equipped, proportions, capeId, local = false }) {
+function AvatarSlot({ id, equipped, proportions, local = false }) {
   const outer = useRef(null)
   const hand = useRef(null)
   const back = useRef(null)
@@ -121,12 +109,12 @@ function AvatarSlot({ id, equipped, proportions, capeId, local = false }) {
     m.visible = false
     return m
   }, [])
-  const hasCape = Boolean(capeId && capeId !== 'none')
-  const cape = useMemo(() => {
-    const c = new Mesh(hasCape ? capeGeometry(capeId) : undefined, capeMaterial)
-    c.visible = hasCape
-    return c
-  }, [capeId, hasCape])
+  const offMesh = useMemo(() => {
+    const m = new Mesh(undefined, undefined)
+    m.visible = false
+    return m
+  }, [])
+  const offHand = useRef(null)
   /** Your own body's state each frame (reused; nothing allocated in the loop). */
   const selfSrc = useMemo(() => ({ x: 0, y: 0, z: 0, yaw: 0, pitch: 0, anim: 0, speed: 0, walkPhase: 0, swingAt: 0 }), [])
 
@@ -135,13 +123,6 @@ function AvatarSlot({ id, equipped, proportions, capeId, local = false }) {
     avatarShown.add(id)
   }, [id])
   useEffect(() => () => avatarShown.delete(id), [id])
-  useEffect(() => () => cape.geometry?.dispose(), [cape])
-  useEffect(() => {
-    if (!capeMaterial.map) {
-      capeMaterial.map = getCapeAtlas()
-      capeMaterial.needsUpdate = true
-    }
-  }, [])
 
   useFrame(({ camera }) => {
     const g = outer.current
@@ -150,6 +131,7 @@ function AvatarSlot({ id, equipped, proportions, capeId, local = false }) {
     let src
     let visible = true
     let held = 'fist'
+    let off = 'fist'
     let sword = 'classic'
     if (local) {
       const p = runtime.player
@@ -160,16 +142,18 @@ function AvatarSlot({ id, equipped, proportions, capeId, local = false }) {
       src.z = p.body.z
       src.yaw = p.yaw
       src.pitch = p.pitch
-      src.anim = p.anim
+      src.anim = runtime.blocking ? 5 : p.anim
       src.speed = p.speed
       src.walkPhase = p.walkPhase
       src.swingAt = runtime.swingAt
       held = runtime.zone === 'match' ? runtime.me.inv?.[runtime.me.sel]?.id || 'fist' : runtime.zone === 'lobby' ? LOBBY_SWORD : 'fist'
+      off = runtime.zone === 'match' ? runtime.me.inv?.[OFFHAND]?.id || 'fist' : 'fist'
       sword = getGame().profile.sword
     } else {
       src = runtime.remotes.get(id)
       if (src) {
         held = src.held
+        off = src.off || 'fist'
         sword = src.sword
       }
     }
@@ -209,15 +193,17 @@ function AvatarSlot({ id, equipped, proportions, capeId, local = false }) {
     const t = (now - src.swingAt) / 280
     m.swing = t >= 0 && t < 1 ? Math.sin(t * Math.PI) : 0
     m.holding = held !== 'fist'
+    m.offShield = off === 'shield'
+    m.offHolding = off !== 'fist'
 
     // The held item, handle in the palm, blade pointing ahead.
-    const model = itemModel(held, sword)
+    const model = itemModel(src.anim === 5 && off !== 'shield' ? 'shield' : held, sword)
     if (model) {
       if (itemMesh.geometry !== model.geometry) {
         itemMesh.geometry = model.geometry
         itemMesh.material = model.material
       }
-      const size = model.block ? 0.28 : 0.72
+      const size = model.block ? 0.32 : 0.9
       itemMesh.scale.setScalar(size)
       if (model.block) {
         itemMesh.position.set(0, -0.08, 0.1)
@@ -233,26 +219,44 @@ function AvatarSlot({ id, equipped, proportions, capeId, local = false }) {
       itemMesh.visible = false
     }
 
-    // The cape lifts as they run.
-    if (hasCape) {
-      cape.position.set(0, -0.02, -0.2)
-      cape.rotation.x = 0.12 + Math.min(1.0, src.speed * 0.13) + (src.anim === 4 ? 0.3 : 0) + Math.sin(now / 300 + (Number(id) || 0)) * 0.04
-    }
+    // The left hand's item (a shield faces out from the forearm).
+    const offModel = off !== 'fist' ? itemModel(off, sword) : null
+    if (offModel) {
+      if (offMesh.geometry !== offModel.geometry) {
+        offMesh.geometry = offModel.geometry
+        offMesh.material = offModel.material
+      }
+      const size = offModel.block ? 0.28 : 0.72
+      offMesh.scale.setScalar(size)
+      if (offModel.block) {
+        offMesh.position.set(0, -0.08, 0.1)
+        offMesh.rotation.set(0, -0.6, 0)
+      } else if (off === 'shield') {
+        offMesh.position.set(0.06, -0.2, 0.08)
+        offMesh.rotation.set(0, Math.PI, 0)
+      } else {
+        offMesh.position.set(0, -0.33 * size, 0.33 * size)
+        offMesh.rotation.set(0, -Math.PI / 2, -Math.PI / 2)
+      }
+      offMesh.visible = true
+    } else offMesh.visible = false
+
   })
 
   return (
     <group ref={outer} visible={false}>
       <ErrorBoundary>
         <Suspense fallback={null}>
-          <BloxityAvatar equipped={equipped} proportions={proportions} motionRef={motion} handRef={hand} backRef={back} activeRef={active} onReady={onReady} local={local} />
+          <BloxityAvatar equipped={equipped} proportions={proportions} motionRef={motion} handRef={hand} offHandRef={offHand} backRef={back} activeRef={active} onReady={onReady} local={local} />
         </Suspense>
       </ErrorBoundary>
       <group ref={hand}>
         <primitive object={itemMesh} />
       </group>
-      <group ref={back}>
-        <primitive object={cape} />
+      <group ref={offHand}>
+        <primitive object={offMesh} />
       </group>
+      <group ref={back} />
     </group>
   )
 }

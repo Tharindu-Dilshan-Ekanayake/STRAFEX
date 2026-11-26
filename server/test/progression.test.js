@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { DAY_MS, levelXp, QUESTS, QUESTS_PER_DAY, ROUND } from '../../shared/balance.js'
+import { DAY_MS, DUEL, levelXp, QUESTS, QUESTS_PER_DAY, REWARDS, XP } from '../../shared/balance.js'
 import { GameHost } from '../../shared/host.js'
 import { addXp, applyRoundResult, createProfile, normalizeProfile, refreshQuests } from '../../shared/logic.js'
 import { mulberry32 } from '../../shared/rng.js'
@@ -35,17 +35,17 @@ test('daily quests: three a day, the same for the same player, paying out when d
   const again = createProfile('player-7', 'Q')
   refreshQuests(again, NOW + 1000)
   assert.deepEqual(again.quests.list.map((q) => q.id), p.quests.list.map((q) => q.id))
-  // A huge round finishes everything.
+  // A huge duel finishes what it can.
   const before = p.cash
-  const r = applyRoundResult(p, { kills: 20, placement: 1, win: true, lucky: 50, placed: 200 }, NOW)
-  const round = { kills: 20, wins: 1, lucky: 50, games: 1, placed: 200, top3: 1 }
+  const r = applyRoundResult(p, { kind: 'duel', kills: 20, win: true, hits: 200, bestCombo: 12 }, NOW)
+  const round = { kills: 20, wins: 1, duels: 1, ffaKills: 0, hits: 200, combo8: 1 }
   const expected = p.quests.list.filter((q) => round[QUESTS[q.id].stat] >= QUESTS[q.id].goal).map((q) => q.id)
   assert.deepEqual(r.quests.map((q) => q.id), expected)
   assert.ok(p.quests.list.every((q) => q.done === expected.includes(q.id)))
   assert.equal(p.cash, before + r.cash + r.quests.reduce((s, q) => s + q.cash, 0) + r.levelUps.reduce((s, u) => s + u.cash, 0))
   assert.ok(r.xp > 0 && r.levelUps.length >= 1)
   // Done quests don't pay twice; the next day brings new ones.
-  const r2 = applyRoundResult(p, { kills: 20, placement: 1, win: true, lucky: 50, placed: 200 }, NOW)
+  const r2 = applyRoundResult(p, { kind: 'duel', kills: 20, win: true, hits: 200, bestCombo: 12 }, NOW)
   assert.ok(r2.quests.every((q) => !r.quests.some((d) => d.id === q.id)))
   refreshQuests(p, NOW + DAY_MS)
   assert.ok(p.quests.list.every((q) => !q.done && q.progress === 0))
@@ -66,7 +66,23 @@ test('old saves gain a level, XP and quests; junk is cleaned', () => {
   assert.deepEqual(junk.quests.list, [{ id: 'win1', progress: 0, done: false }])
 })
 
-test('a round counts lucky blocks and placed blocks and shows your level to everyone', () => {
+test('a duel pays for playing, winning and hits; a Spirelands life pays per kill', () => {
+  const p = createProfile('d', 'Duelist')
+  const cash = p.cash
+  const r = applyRoundResult(p, { kind: 'duel', kills: 2, win: true, hits: 10, bestCombo: 3 }, NOW)
+  assert.equal(r.cash, REWARDS.play + REWARDS.win + 2 * REWARDS.kill)
+  assert.equal(r.xp, XP.play + XP.win + 2 * XP.kill + 10 * XP.perHits)
+  assert.equal(p.wins, 1)
+  assert.equal(p.games, 1)
+  const f = applyRoundResult(p, { kind: 'ffa', kills: 3, win: false, hits: 5, bestCombo: 2 }, NOW)
+  assert.equal(f.cash, 3 * REWARDS.kill)
+  assert.equal(p.games, 1, 'a Spirelands life is not a duel')
+  assert.equal(p.stats.ffaKills, 3)
+  assert.equal(p.kills, 5)
+  assert.ok(p.cash >= cash + r.cash + f.cash)
+})
+
+test('your level shows to everyone, and a duel against a bot pays out through the session', () => {
   let t = NOW
   const sent = []
   const rewards = []
@@ -79,17 +95,17 @@ test('a round counts lucky blocks and placed blocks and shows your level to ever
   host.tick(0.05)
   const roster = [...sent].reverse().find((m) => m.type === 'roster').payload.list
   assert.equal(roster.find((e) => e.name === 'Lvl').level, 7)
-  assert.ok(roster.length >= 1)
-  for (let i = 0; i < ROUND.intermissionMs + ROUND.cagesMs + 300; i += 50) {
+  host.message('p', 'queue', { mode: 'sword' })
+  for (let i = 0; i < DUEL.soloBotMs + DUEL.voteMs + DUEL.countdownMs + 400; i += 50) {
     t += 50
     host.tick(0.05)
   }
   const me = host.entOf('p')
-  me.lucky = 3
-  me.placed = 12
-  host.reward(me, 4)
-  assert.equal(rewards[0].lucky, 3)
-  assert.equal(rewards[0].placed, 12)
+  const arena = host.arenas.get(me.arena)
+  host.endDuel(arena, me, false)
+  assert.equal(rewards.length, 1)
+  assert.equal(rewards[0].win, true)
   const r = session.awardRound(rewards[0], t)
-  assert.ok(r.xp >= 25 + 3 * 4)
+  assert.ok(r.xp >= XP.play + XP.win)
+  assert.equal(profile.wins, 1)
 })

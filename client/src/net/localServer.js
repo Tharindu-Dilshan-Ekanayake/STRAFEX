@@ -123,6 +123,10 @@ function startInline({ id, name, onEvent }, { GameHost, normalizeProfile, Player
       session.awardRound(result)
       save()
     },
+    onParkour: (_cid, ms) => {
+      session.parkour(ms)
+      save()
+    },
   })
 
   session.sendProfile()

@@ -1,4 +1,10 @@
-import { PLAYER } from './physics.js'
+import { inWater, onPad, PAD_V, PLAYER } from './physics.js'
+
+/** Is a jump pad within a few blocks under `p` (on the way up from one, or about to land)? */
+function padBelow(world, p) {
+  for (let dy = 0; dy <= 3; dy += 1) if (onPad(world, p.x, p.y - dy, p.z)) return true
+  return false
+}
 
 /**
  * Server-side sanity checks on the positions clients report (the client simulates its
@@ -62,12 +68,17 @@ export function checkMove(world, mv, from, to, dt, now, { speedMul = 1, jumpMul 
   const cz = Math.floor(to.z)
   if (world.isSolid(cx, Math.floor(to.y + 0.1), cz) && world.isSolid(cx, Math.floor(to.y + 1.5), cz)) return 'wall'
 
-  if (supported(world, to.x, to.y, to.z)) {
+  // A jump pad just under you (reports at 20 Hz can miss the moment you stood on it).
+  if (padBelow(world, from) || padBelow(world, to)) mv.padAt = now
+  // Standing, or swimming: both count as solid footing.
+  if (supported(world, to.x, to.y, to.z) || inWater(world, to.x, to.y, to.z)) {
     mv.baseY = to.y
     mv.groundAt = now
     return null
   }
-  if (to.y > mv.baseY + rise(PLAYER.jumpV * Math.max(1, jumpMul)) + MOVE.riseSlack) return 'fly'
+  // Just off a jump pad: you may rise as high as it throws you.
+  const launch = now - (mv.padAt || -1e9) < 2500 ? PAD_V : PLAYER.jumpV * Math.max(1, jumpMul)
+  if (to.y > mv.baseY + rise(launch) + MOVE.riseSlack) return 'fly'
   if (now - mv.groundAt > MOVE.hoverMs && to.y >= from.y - 0.01) return 'fly'
   return null
 }

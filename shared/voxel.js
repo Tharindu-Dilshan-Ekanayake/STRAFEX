@@ -45,6 +45,19 @@ export const B = {
   WOOL_YELLOW: 34,
   WATER: 35,
   QUARTZ: 36,
+  OBSIDIAN: 37,
+  CRYSTAL: 38,
+  CORESTONE: 39,
+  CLAY_ORANGE: 40,
+  CLAY_RED: 41,
+  MOSSY_BRICKS: 42,
+  SLATE: 43,
+  JUMP_PAD: 44,
+  AZURE: 45,
+  FINISH: 46,
+  HAY: 47,
+  MUSHROOM: 48,
+  LANTERN: 49,
 }
 
 /**
@@ -102,9 +115,30 @@ BLOCKS[B.TALL_GRASS] = def('Tall Grass', 'tall_grass', 0, null, { solid: false, 
 BLOCKS[B.ORE] = def('Gem Ore', 'ore', 1.6, 'stone_bricks')
 BLOCKS[B.WATER] = def('Water', 'water', Infinity, null, { solid: false })
 BLOCKS[B.QUARTZ] = def('Quartz', ['quartz_top', 'quartz', 'quartz_top'], 0.9, 'stone_bricks')
+/** Blast-proof: crystals sit on it, explosions leave it standing. */
+BLOCKS[B.OBSIDIAN] = def('Obsidian', 'obsidian', 5, 'obsidian')
+/** A blast crystal: breaks at a touch and explodes (host.js). */
+BLOCKS[B.CRYSTAL] = def('Blast Crystal', 'crystal', 0, null, { render: 'cutout', glow: true, crystal: true })
+/** Arena floors and world bottoms: nothing breaks it. */
+BLOCKS[B.CORESTONE] = def('Corestone', 'corestone', Infinity, null)
+BLOCKS[B.CLAY_ORANGE] = def('Orange Clay', 'clay_orange', 1, 'sandstone')
+BLOCKS[B.CLAY_RED] = def('Red Clay', 'clay_red', 1, 'sandstone')
+BLOCKS[B.MOSSY_BRICKS] = def('Mossy Bricks', 'mossy_bricks', 1.2, 'stone_bricks')
+BLOCKS[B.SLATE] = def('Slate', 'slate', 1.5, 'stone_bricks')
+/** Step on it and you're thrown high into the air (physics.js). */
+BLOCKS[B.JUMP_PAD] = def('Jump Pad', ['pad_top', 'pad_side', 'pad_side'], Infinity, null, { pad: true })
+/** Polished blue stone for statues and trim. */
+BLOCKS[B.AZURE] = def('Azure Block', 'azure', 1.5, 'stone_bricks')
+/** The parkour's finish line. */
+BLOCKS[B.FINISH] = def('Finish Plate', ['finish_top', 'gold', 'gold'], Infinity, null, { glow: true })
+BLOCKS[B.HAY] = def('Hay Bale', ['hay_top', 'hay_side', 'hay_top'], 0.5, 'planks')
+/** A giant mushroom's cap: red with white spots. */
+BLOCKS[B.MUSHROOM] = def('Mushroom Cap', 'mushroom', 0.4, null)
+BLOCKS[B.LANTERN] = def('Lantern', ['lantern_top', 'lantern', 'lantern_top'], 0.4, null, { glow: true })
 
 export const isSolidBlock = (id) => Boolean(BLOCKS[id]?.solid)
 export const isLucky = (id) => Boolean(BLOCKS[id]?.lucky)
+export const isCrystal = (id) => Boolean(BLOCKS[id]?.crystal)
 
 /** A box of blocks, `sx` x `sy` x `sz`, one byte each; y is the slowest axis. */
 export class VoxelWorld {
@@ -113,6 +147,16 @@ export class VoxelWorld {
     this.sy = sy
     this.sz = sz
     this.data = data || new Uint8Array(sx * sy * sz)
+    /**
+     * A world that fills its box (Spirelands): nothing ever sees past its bottom or its
+     * outer sides, so the mesher draws no faces there. Physics is unaffected.
+     */
+    this.sealed = false
+    /**
+     * A world with an open sea: the water's surface at this height is drawn as one plane
+     * to the horizon (Environment.jsx), not block by block. -1: none.
+     */
+    this.seaLevel = -1
   }
 
   inBounds(x, y, z) {
@@ -138,6 +182,7 @@ export class VoxelWorld {
   }
 
   isSolid(x, y, z) {
+    if (this.sealed && (x < 0 || z < 0 || x >= this.sx || z >= this.sz)) return true
     return isSolidBlock(this.get(x, y, z))
   }
 
@@ -148,7 +193,10 @@ export class VoxelWorld {
   }
 
   clone() {
-    return new VoxelWorld(this.sx, this.sy, this.sz, this.data.slice())
+    const w = new VoxelWorld(this.sx, this.sy, this.sz, this.data.slice())
+    w.sealed = this.sealed
+    w.seaLevel = this.seaLevel
+    return w
   }
 }
 

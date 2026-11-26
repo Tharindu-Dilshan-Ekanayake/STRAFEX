@@ -30,7 +30,7 @@ const set = (name, swing = 0, sway = 0, twist = 0) => {
 /**
  * @param {{ walkPhase: number, speed: number, anim: number, swing: number,
  *   holding: boolean, pitch: number, time: number }} m
- *   anim: 0 idle, 1 walk, 2 sprint, 3 sneak, 4 in the air (host ANIMS); swing 0..1
+ *   anim: 0 idle, 1 walk, 2 sprint, 3 sneak, 4 in the air, 5 shield up (host ANIMS); swing 0..1
  *   through an attack; pitch the camera's (up positive).
  */
 export function computePose(m) {
@@ -73,8 +73,22 @@ export function computePose(m) {
   const swing = m.swing || 0
   const hold = m.holding ? -0.45 : 0
   const rightBase = m.holding ? s * armAmp * 0.3 : s * armAmp
-  set('ArmR1', rightBase + hold - swing * 1.9 - breathe, -armOut + swing * 0.25, swing * 0.4)
-  set('ArmR2', -0.2 - (m.holding ? 0.35 : walk * 0.25) - swing * 0.3, 0, 0)
+  // A shield in the offhand comes up on the left arm; anything else there is held out.
+  if (m.anim === 5 && m.offShield) {
+    set('ArmL1', -1.25, -0.35, -0.2)
+    set('ArmL2', -0.7, 0, 0)
+  } else if (m.offHolding) {
+    set('ArmL1', -s * armAmp * 0.3 - 0.45 + breathe, armOut, 0)
+    set('ArmL2', -0.55, 0, 0)
+  }
+  if (m.anim === 5 && !m.offShield) {
+    // Shield up in the right hand: the arm raised across the chest.
+    set('ArmR1', -1.25, 0.35, 0.2)
+    set('ArmR2', -0.7, 0, 0)
+  } else {
+    set('ArmR1', rightBase + hold - swing * 1.9 - breathe, -armOut + swing * 0.25, swing * 0.4)
+    set('ArmR2', -0.2 - (m.holding ? 0.35 : walk * 0.25) - swing * 0.3, 0, 0)
+  }
 
   // Spine leans in when sneaking and sprinting; the head follows the camera.
   const lean = sneak ? 0.45 : sprint * 0.12

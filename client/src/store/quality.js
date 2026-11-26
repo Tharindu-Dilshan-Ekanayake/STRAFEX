@@ -13,14 +13,24 @@ export const QUALITY_LEVELS = ['LOW', 'MEDIUM', 'HIGH']
 export const PRESETS = {
   LOW: {
     dpr: 1,
-    antialias: false,
+    /**
+     * Hardware multisampling, even on LOW: no extra pass (on phones' tile GPUs it is
+     * resolved on-chip, nearly free), and blocks' edges stop looking jagged.
+     */
+    antialias: true,
     /** No realtime shadows on any preset: terrain shading is baked into the blocks. */
     shadows: 'none',
     particles: false,
-    /** Sparkles over lucky blocks. */
+    /** Most player figures drawn at once (a full lobby: the nearest). */
+    maxFigures: 12,
+    /** Sparkle effects (unused by STRAFEX: kept so old saved settings stay valid). */
     sparkles: false,
-    viewDistance: 130,
-    fogNear: 45,
+    /** Leaves and grass sway in the wind (a few shader instructions, no extra draws). */
+    foliageSway: false,
+    /** Strength of the terrain's colour grade (free: part of the terrain shader). */
+    colorGrade: 1,
+    viewDistance: 96,
+    fogNear: 36,
     cloudCount: 10,
     /** Max side of any generated texture. */
     maxTexture: 512,
@@ -46,8 +56,11 @@ export const PRESETS = {
     antialias: true,
     shadows: 'none',
     particles: true,
+    maxFigures: 18,
     sparkles: true,
-    viewDistance: 180,
+    foliageSway: true,
+    colorGrade: 1,
+    viewDistance: 170,
     fogNear: 70,
     cloudCount: 18,
     maxTexture: 1024,
@@ -65,10 +78,13 @@ export const PRESETS = {
     antialias: true,
     shadows: 'none',
     particles: true,
+    maxFigures: 24,
     sparkles: true,
-    viewDistance: 240,
-    fogNear: 100,
-    cloudCount: 26,
+    foliageSway: true,
+    colorGrade: 1,
+    viewDistance: 260,
+    fogNear: 120,
+    cloudCount: 40,
     maxTexture: 1024,
     remoteDrawDistance: 200,
     avatarCount: 12,

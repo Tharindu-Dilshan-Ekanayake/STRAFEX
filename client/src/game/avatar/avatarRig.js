@@ -156,6 +156,23 @@ export function collectRig(root) {
       rig.handRestInv = rootQuatInv.clone().multiply(handBone.getWorldQuaternion(new Quaternion())).invert()
     }
 
+    // The left palm, the same way (for the offhand's item).
+    const offBone = skeleton.bones.find((b) => b.name === 'ArmL2')
+    const armL = rig.partMeshes.arm_L
+    const wristL = skeleton.bones.find((b) => b.name === 'ArmL2_leaf')
+    if (offBone && (armL || wristL)) {
+      let palm
+      if (armL) {
+        const box = new Box3().setFromObject(armL)
+        palm = new Vector3((box.min.x + box.max.x) / 2, box.min.y + (box.max.y - box.min.y) * 0.06, (box.min.z + box.max.z) / 2)
+      } else {
+        palm = wristL.getWorldPosition(new Vector3())
+      }
+      rig.offHandBone = offBone
+      rig.offHandPoint = offBone.worldToLocal(palm)
+      rig.offHandRestInv = rootQuatInv.clone().multiply(offBone.getWorldQuaternion(new Quaternion())).invert()
+    }
+
     rig.hatBone = skeleton.bones.find((b) => b.name === HAT_BONE) || null
     rig.backBone = skeleton.bones.find((b) => b.name === BACK_BONE) || null
 
@@ -702,17 +719,17 @@ const _scratchS = new Vector3()
  * Puts `hand` (an object in one of the avatar's ancestors) on the palm, turned by as
  * much as the forearm has turned from its rest pose. Run after `animateRig`.
  */
-export function placeHand(rig, hand) {
-  const bone = rig.handBone
+export function placeHand(rig, hand, left = false) {
+  const bone = left ? rig.offHandBone : rig.handBone
   const parent = hand?.parent
   if (!bone || !parent) return
   // Refreshes the whole chain down to the forearm, the hand's parent included.
   bone.updateWorldMatrix(true, false)
   _parentInv.copy(parent.matrixWorld).invert()
-  hand.position.copy(rig.handPoint).applyMatrix4(bone.matrixWorld).applyMatrix4(_parentInv)
+  hand.position.copy(left ? rig.offHandPoint : rig.handPoint).applyMatrix4(bone.matrixWorld).applyMatrix4(_parentInv)
   bone.matrixWorld.decompose(_scratchP, _boneQ, _scratchS)
   parent.matrixWorld.decompose(_scratchP, _parentQ, _scratchS)
-  hand.quaternion.copy(_parentQ.invert()).multiply(_boneQ).multiply(rig.handRestInv)
+  hand.quaternion.copy(_parentQ.invert()).multiply(_boneQ).multiply(left ? rig.offHandRestInv : rig.handRestInv)
 }
 
 const _anchorP = new Vector3()

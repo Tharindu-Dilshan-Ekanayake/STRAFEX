@@ -35,22 +35,22 @@ export default function LoadingScreen({ done }) {
   return (
     <div
       className="absolute inset-0 z-50 flex flex-col items-center justify-center transition-opacity duration-400"
-      style={{ background: 'linear-gradient(#5fc4ff, #d4f3ff)', opacity: done ? 0 : 1, gap: u(24) }}
+      style={{ background: 'linear-gradient(#1d1630, #3a2a5e 55%, #ff9a4a)', opacity: done ? 0 : 1, gap: u(24) }}
     >
-      <div className="bob pixelated" style={{ width: u(110), height: u(110), background: '#ffcb1f', border: `${u(8)} solid #e08a0c`, boxShadow: `0 ${u(10)} 0 rgba(0,0,0,0.2)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <span className="txt-o" style={{ fontSize: u(70), fontWeight: 700 }}>
-          ?
+      <div className="bob pixelated" style={{ width: u(110), height: u(110), background: '#2a1b3d', border: `${u(8)} solid #ffb21a`, boxShadow: `0 ${u(10)} 0 rgba(0,0,0,0.25)`, display: 'flex', alignItems: 'center', justifyContent: 'center', transform: 'rotate(45deg)' }}>
+        <span className="txt-o" style={{ fontSize: u(64), fontWeight: 700, transform: 'rotate(-45deg)' }}>
+          ⚔
         </span>
       </div>
-      <div className="flex flex-wrap justify-center" style={{ gap: u(18) }}>
-        <Fancy size={56} from="#fff7b0" to="#ffb21a" style={{ fontFamily: 'Silkscreen' }}>LUCKY</Fancy>
-        <Fancy size={56} from="#e6fbff" to="#3fb8ff" style={{ fontFamily: 'Silkscreen' }}>SKY BRAWL</Fancy>
+      <div className="flex flex-col items-center" style={{ gap: u(6) }}>
+        <Fancy size={72} from="#fff7b0" to="#ffb21a" style={{ fontFamily: 'Silkscreen' }}>STRAFEX</Fancy>
+        <span className="txt-o" style={{ fontSize: u(18), letterSpacing: '0.2em' }}>PVP · PRACTICE · SPIRELANDS</span>
       </div>
       <div className="mc-panel" style={{ width: u(360), height: u(26), padding: u(4) }}>
         <div style={{ width: `${pct}%`, height: '100%', background: '#7cff6b', transition: 'width 0.3s' }} />
       </div>
       <div className="txt-o" style={{ fontSize: u(18) }}>
-        Building the islands…
+        Loading…
       </div>
     </div>
   )

@@ -6,7 +6,7 @@ import { runtime } from '../src/game/runtime'
 import { applySnapshot, clearRemotes, INTERP_MS, interpolateRemotes } from '../src/net/remotes'
 import { quickBubble, showQuickChat } from '../src/net/quickChat'
 
-const entry = (eid, x, z, held = 'fist') => [eid, x * 100, 3000, z * 100, 0, 0, 1, ITEM_IDS.indexOf(held)]
+const entry = (eid, x, z, held = 'fist', off = 'fist') => [eid, x * 100, 3000, z * 100, 0, 0, 1, ITEM_IDS.indexOf(held), ITEM_IDS.indexOf(off)]
 
 describe('remote players', () => {
   beforeEach(() => {
@@ -21,10 +21,10 @@ describe('remote players', () => {
     vi.spyOn(performance, 'now').mockImplementation(() => t)
     applySnapshot('match', [...entry(2, 0, 0), ...entry(1, 9, 9)])
     t += 100
-    applySnapshot('match', entry(2, 1, 0, 'stone_sword'))
+    applySnapshot('match', entry(2, 1, 0, 'diamond_axe'))
     expect(runtime.remotes.has(1)).toBe(false) // never ourselves
     const r = runtime.remotes.get(2)
-    expect(r.held).toBe('stone_sword')
+    expect(r.held).toBe('diamond_axe')
     // INTERP_MS behind "now": halfway between the two snapshots.
     t = 10_000 + 50 + INTERP_MS
     interpolateRemotes(1 / 60)

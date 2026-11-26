@@ -16,6 +16,12 @@ const camPos = new Vector3()
 const lookDir = new Vector3()
 
 export function placeCamera(camera, game, b, eyeY, dt, now) {
+  placeCameraInner(camera, game, b, eyeY, dt, now)
+  runtime.cameraPos.x = camera.position.x
+  runtime.cameraPos.z = camera.position.z
+}
+
+function placeCameraInner(camera, game, b, eyeY, dt, now) {
   const p = runtime.player
   const cam = runtime.camera
   const world = worldState.world
@@ -54,9 +60,10 @@ export function placeCamera(camera, game, b, eyeY, dt, now) {
       else camera.position.lerp(camPos, Math.min(1, dt * 10))
       camera.lookAt(camTarget)
     } else {
-      // Nobody left to watch: hover over the middle.
-      camera.position.set(56, 50, 80)
-      camera.lookAt(56, 30, 56)
+      // Nobody to watch (picking a kit, or the round just ended): look over the world.
+      const c = worldState.gen?.center || { x: b.x, y: b.y, z: b.z }
+      camera.position.set(c.x + 18, c.y + 16, c.z + 18)
+      camera.lookAt(c.x, c.y, c.z)
     }
     runtime.snap = false
     return

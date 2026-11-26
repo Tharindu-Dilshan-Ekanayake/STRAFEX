@@ -35,6 +35,7 @@ function App() {
       <GameScene onReady={handleReady} />
       <div id="nameplates" />
       <div id="hurt-vignette" />
+      <div id="water-overlay" />
       <div className="screen-vignette" />
       {ready && (
         <>

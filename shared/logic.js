@@ -46,12 +46,14 @@ export function createProfile(id, name) {
     adAt: {},
     tutorial: false,
     welcomeGift: false,
+    /** The day the parkour reward was last claimed. */
+    parkourDay: -1,
     level: 1,
     xp: 0,
     /** Timed boosts: `{ xpUntil }` (ms timestamps). */
     boosts: {},
     quests: { day: -1, list: [] },
-    stats: { playtime: 0, bestKills: 0, cashEarned: 0, casesOpened: 0 },
+    stats: { playtime: 0, bestKills: 0, bestCombo: 0, ffaKills: 0, cashEarned: 0, casesOpened: 0 },
     createdAt: Date.now(),
     lastSeen: Date.now(),
   }
@@ -72,6 +74,7 @@ export function normalizeProfile(raw, id, name) {
   p.passes = raw.passes && typeof raw.passes === 'object' ? { ...raw.passes } : {}
   p.daily = { lastDay: isNum(raw.daily?.lastDay) ? raw.daily.lastDay : -1, streak: isNum(raw.daily?.streak) ? raw.daily.streak : 0 }
   p.adAt = raw.adAt && typeof raw.adAt === 'object' ? { ...raw.adAt } : {}
+  p.parkourDay = isNum(raw.parkourDay) ? raw.parkourDay : -1
   p.boosts = raw.boosts && typeof raw.boosts === 'object' && isNum(raw.boosts.xpUntil) ? { xpUntil: raw.boosts.xpUntil } : {}
   p.level = isNum(raw.level) ? Math.max(1, Math.floor(raw.level)) : 1
   p.xp = isNum(raw.xp) ? Math.max(0, Math.floor(raw.xp)) : 0
@@ -146,14 +149,14 @@ export function refreshQuests(profile, now, force = false) {
   return true
 }
 
-/** What a round adds to each quest stat. */
-export const questStats = ({ kills = 0, placement = 99, win = false, lucky = 0, placed = 0 }) => ({
+/** What a duel (or a Spirelands life) adds to each quest stat. */
+export const questStats = ({ kind = 'duel', kills = 0, win = false, hits = 0, bestCombo = 0 }) => ({
   kills,
-  wins: win ? 1 : 0,
-  lucky,
-  games: 1,
-  placed,
-  top3: placement <= 3 ? 1 : 0,
+  wins: kind === 'duel' && win ? 1 : 0,
+  duels: kind === 'duel' ? 1 : 0,
+  ffaKills: kind === 'ffa' ? kills : 0,
+  hits,
+  combo8: bestCombo >= 8 ? 1 : 0,
 })
 
 /** Moves today's quests along; finished ones pay out. Returns the ones just finished. */
@@ -174,30 +177,30 @@ export function progressQuests(profile, stats, now) {
 }
 
 /**
- * A finished round: cash, XP, quest progress and any level-ups, all applied to the
- * profile. `lucky` and `placed` are the lucky blocks broken and blocks placed.
+ * A finished duel (`kind: 'duel'`) or Spirelands life (`kind: 'ffa'`): cash, XP, quest
+ * progress and any level-ups, all applied to the profile.
  */
-export function applyRoundResult(profile, { kills = 0, placement = 99, win = false, lucky = 0, placed = 0 }, now = Date.now(), rng = Math.random) {
-  let cash = REWARDS.play + kills * REWARDS.kill
-  if (win) cash += REWARDS.win
-  cash += REWARDS.placement[placement - 1] || 0
+export function applyRoundResult(profile, { kind = 'duel', kills = 0, win = false, hits = 0, bestCombo = 0, bounties = 0 }, now = Date.now(), rng = Math.random) {
+  const duel = kind === 'duel'
+  let cash = kills * REWARDS.kill + bounties * REWARDS.bounty + (duel ? REWARDS.play + (win ? REWARDS.win : 0) : 0)
   if (profile.passes.vip) cash *= 2
   profile.cash += cash
   profile.kills += kills
-  profile.games += 1
-  if (win) profile.wins += 1
+  if (duel) profile.games += 1
+  if (duel && win) profile.wins += 1
   profile.stats.bestKills = Math.max(profile.stats.bestKills, kills)
+  profile.stats.bestCombo = Math.max(profile.stats.bestCombo || 0, bestCombo)
+  if (!duel) profile.stats.ffaKills = (profile.stats.ffaKills || 0) + kills
   profile.stats.cashEarned += cash
 
-  let xp = XP.play + kills * XP.kill + Math.min(lucky, XP.maxLucky) * XP.lucky + (XP.placement[placement - 1] || 0)
-  if (win) xp += XP.win
+  let xp = kills * XP.kill + Math.min(Math.floor(hits * XP.perHits), XP.maxHits) + (duel ? XP.play + (win ? XP.win : 0) : 0)
   // XP Pass (+50%) and an active XP Boost (x2) stack.
   const xpMul = (profile.passes.xp ? 1.5 : 1) * ((profile.boosts?.xpUntil || 0) > now ? 2 : 1)
   xp = Math.round(xp * xpMul)
-  const quests = progressQuests(profile, questStats({ kills, placement, win, lucky, placed }), now)
+  const quests = progressQuests(profile, questStats({ kind, kills, win, hits, bestCombo }), now)
   const questXp = quests.reduce((s, q) => s + q.xp, 0)
   const levelUps = addXp(profile, xp + questXp, rng)
-  return { cash, kills, placement, win, xp, quests, levelUps, level: profile.level }
+  return { kind, cash, kills, win, xp, quests, levelUps, level: profile.level }
 }
 
 /**
@@ -278,6 +281,23 @@ export function applyAdReward(profile, placement, now) {
   profile.adAt[placement] = now
   if (ad.grant.cash) profile.cash += ad.grant.cash
   return ad.label
+}
+
+/**
+ * Reached the top of the lobby parkour in `ms`: the cash once a day, the best time always.
+ * Returns `{ cash, best }` (cash 0 when today's reward is already claimed).
+ */
+export function claimParkour(profile, ms, now) {
+  const today = dayNumber(now)
+  const first = profile.parkourDay !== today
+  if (first) {
+    profile.parkourDay = today
+    profile.cash += REWARDS.parkour
+  }
+  const prev = profile.stats.parkourBest || 0
+  const best = !prev || ms < prev
+  if (best) profile.stats.parkourBest = ms
+  return { cash: first ? REWARDS.parkour : 0, best }
 }
 
 /** Nothing accrues while away in this game. Kept for the server's join flow. */

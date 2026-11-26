@@ -3,10 +3,10 @@
  * and retention. Used by the server's /api/analytics report and by offline simulations.
  *
  * Events are `{ type, at, data }` with types:
- * - round:        one finished round (length, how it ended, how everyone died)
- * - player_round: one real player's round (placement, how they died, how long they lived)
- * - leave:        a player left (where they were, how long they stayed, rounds played)
- * - tutorial:     a player reached tutorial step n
+ * - duel_start: a duel's map is picked (mode, map, against a bot?)
+ * - duel_end:   a duel is decided (rounds, forfeit, who won, how long)
+ * - ffa_death:  someone died in Spirelands (how, by a bot?, their kit)
+ * - leave:      a player left (where they were, how long they stayed, duels played)
  */
 
 const pct = (n, d) => (d ? Math.round((n / d) * 1000) / 10 : 0)
@@ -20,61 +20,38 @@ const secs = (ms) => Math.round(ms / 100) / 10
 const countBy = (list, key) => list.reduce((acc, x) => ((acc[key(x)] = (acc[key(x)] || 0) + 1), acc), {})
 
 export function summarize(events) {
-  const rounds = events.filter((e) => e.type === 'round').map((e) => e.data)
-  const players = events.filter((e) => e.type === 'player_round').map((e) => e.data)
+  const starts = events.filter((e) => e.type === 'duel_start').map((e) => e.data)
+  const duels = events.filter((e) => e.type === 'duel_end').map((e) => e.data)
+  const ffa = events.filter((e) => e.type === 'ffa_death').map((e) => e.data)
   const leaves = events.filter((e) => e.type === 'leave').map((e) => e.data)
-  const tutorial = events.filter((e) => e.type === 'tutorial').map((e) => e.data)
-
-  // How everyone (bots too) died, across all rounds.
-  const deaths = {}
-  for (const r of rounds) for (const [how, n] of Object.entries(r.deaths || {})) deaths[how] = (deaths[how] || 0) + n
-  const totalDeaths = Object.values(deaths).reduce((a, b) => a + b, 0)
-  const byPlayer = rounds.reduce((a, r) => a + (r.byPlayer || 0), 0)
-
-  // How real players died.
-  const playerDeaths = countBy(players.filter((p) => p.died), (p) => (p.byPlayer ? `by a player (${p.died})` : p.died))
+  const vsBots = duels.filter((d) => d.bot)
 
   return {
-    rounds: {
-      count: rounds.length,
-      avgLengthS: secs(avg(rounds.map((r) => r.durationMs))),
-      medianLengthS: secs(median(rounds.map((r) => r.durationMs))),
-      endedByTimePct: pct(rounds.filter((r) => r.reason === 'time').length, rounds.length),
-      wonByBotPct: pct(rounds.filter((r) => r.winnerBot === true).length, rounds.filter((r) => r.winnerBot !== null).length),
-      avgFirstKillS: secs(avg(rounds.filter((r) => r.firstKillMs).map((r) => r.firstKillMs))),
-      avgLavaAtEnd: Math.round(avg(rounds.map((r) => r.lavaY)) * 10) / 10,
-      byMode: countBy(rounds, (r) => r.mode),
-      byMap: countBy(rounds, (r) => r.map),
+    duels: {
+      started: starts.length,
+      finished: duels.length,
+      avgLengthS: secs(avg(duels.map((d) => d.durationMs))),
+      medianLengthS: secs(median(duels.map((d) => d.durationMs))),
+      avgRounds: Math.round(avg(duels.map((d) => d.rounds)) * 10) / 10,
+      forfeitPct: pct(duels.filter((d) => d.forfeit).length, duels.length),
+      vsBotPct: pct(vsBots.length, duels.length),
+      // Against bots: how often the bot wins (too high = bots too strong).
+      botWinPct: pct(vsBots.filter((d) => d.winnerBot === true).length, vsBots.length),
+      byMode: countBy(starts, (d) => d.mode),
+      byMap: countBy(starts, (d) => d.map),
     },
-    deaths: {
-      total: totalDeaths,
-      killedByPlayerPct: pct(byPlayer, totalDeaths),
-      // Caught by the rising lava vs fell (or was knocked) into the lava sea.
-      lavaPct: pct(deaths.lava || 0, totalDeaths),
-      fellPct: pct(deaths.fell || 0, totalDeaths),
-      voidPct: pct(deaths.void || 0, totalDeaths),
-      byCause: deaths,
-    },
-    players: {
-      rounds: players.length,
-      winPct: pct(players.filter((p) => p.win).length, players.length),
-      avgSurvivedS: secs(avg(players.map((p) => p.survivedMs))),
-      avgKills: Math.round(avg(players.map((p) => p.kills)) * 100) / 100,
-      avgLucky: Math.round(avg(players.map((p) => p.lucky)) * 10) / 10,
-      avgPlaced: Math.round(avg(players.map((p) => p.placed)) * 10) / 10,
-      howTheyDied: playerDeaths,
+    spirelands: {
+      deaths: ffa.length,
+      byCause: countBy(ffa, (d) => d.how),
+      byKit: countBy(ffa, (d) => d.kit),
+      killedByBotPct: pct(ffa.filter((d) => d.byBot).length, ffa.length),
     },
     sessions: {
       count: leaves.length,
       medianMinutes: Math.round(median(leaves.map((l) => l.sessionMs)) / 6000) / 10,
-      avgRounds: Math.round(avg(leaves.map((l) => l.rounds)) * 10) / 10,
+      avgDuels: Math.round(avg(leaves.map((l) => l.rounds)) * 10) / 10,
       leftWithoutPlayingPct: pct(leaves.filter((l) => !l.rounds).length, leaves.length),
-      // Where people quit: 'lobby/intermission', 'match/fight', 'spec/fight'...
-      quitWhere: countBy(leaves, (l) => `${l.zone}/${l.phase}`),
-    },
-    tutorial: {
-      // How many reached each step (step 5 done = finished).
-      reachedStep: countBy(tutorial, (t) => t.step),
+      quitWhere: countBy(leaves, (l) => l.zone),
     },
   }
 }

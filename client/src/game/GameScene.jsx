@@ -16,7 +16,14 @@ import PerfGuard from './PerfGuard'
 import PerfProbe from './PerfProbe'
 import ViewModel from './ViewModel'
 import Terrain from './voxel/Terrain'
+import { avatarShown } from './avatar/state'
 import { enterLobby, worldState } from './world'
+
+/**
+ * After the first frame, the loading screen waits this long at most for your own avatar
+ * (so you never see a stand-in body first), then lets you in regardless.
+ */
+const AVATAR_WAIT_MS = 3000
 
 // r3f-perf: dev-only overlay (?perf in the URL); the DEV check drops it from builds.
 const DevPerf = import.meta.env.DEV ? lazy(() => import('r3f-perf').then((m) => ({ default: m.Perf }))) : null
@@ -79,16 +86,28 @@ export function GameScene({ onReady }) {
   }, [game])
 
   useEffect(() => {
-    if (!firstFrame || readySent.current) return
-    readySent.current = true
-    performance.mark('pp:ready')
-    game.loadingEnd()
-    onReady?.()
-    // Not needed for the first frame: the audio engine, and every item's model and icon
-    // (built ahead so nothing is made mid-fight).
-    const idle = (fn, ms) => ('requestIdleCallback' in window ? requestIdleCallback(fn, { timeout: ms }) : setTimeout(fn, 200))
-    idle(prepareAudio, 1500)
-    idle(warmItemModels, 3000)
+    if (!firstFrame || readySent.current) return undefined
+    game.loadingStep('Loading your avatar…')
+    const started = performance.now()
+    let id = 0
+    const check = () => {
+      if (!avatarShown.has('self') && performance.now() - started < AVATAR_WAIT_MS) {
+        id = setTimeout(check, 100)
+        return
+      }
+      if (readySent.current) return
+      readySent.current = true
+      performance.mark('pp:ready')
+      game.loadingEnd()
+      onReady?.()
+      // Not needed for the first frame: the audio engine, and every item's model and icon
+      // (built ahead so nothing is made mid-fight).
+      const idle = (fn, ms) => ('requestIdleCallback' in window ? requestIdleCallback(fn, { timeout: ms }) : setTimeout(fn, 200))
+      idle(prepareAudio, 1500)
+      idle(warmItemModels, 3000)
+    }
+    check()
+    return () => clearTimeout(id)
   }, [firstFrame, game, onReady])
 
   const handleCreated = useCallback(({ gl, scene }) => {
@@ -136,7 +155,7 @@ export function GameScene({ onReady }) {
         gl={createRenderer}
         shadows={false}
         flat
-        camera={{ position: [36, 26, 50], fov, near: 0.08, far: settings.viewDistance }}
+        camera={{ position: [64, 30, 104], fov, near: 0.08, far: settings.viewDistance }}
         onCreated={handleCreated}
       >
         <fog attach="fog" args={['#d4f3ff', settings.fogNear, settings.viewDistance * 0.95]} />
@@ -158,13 +177,12 @@ export function GameScene({ onReady }) {
             {zone === 'lobby' ? <LobbyProps /> : <Effects />}
           </Suspense>
         )}
-        {firstFrame && (
-          <ErrorBoundary>
-            <Suspense fallback={null}>
-              <Avatars />
-            </Suspense>
-          </ErrorBoundary>
-        )}
+        {/* Avatars load from the start (behind the loading screen): yours is ready when you see the game. */}
+        <ErrorBoundary>
+          <Suspense fallback={null}>
+            <Avatars />
+          </Suspense>
+        </ErrorBoundary>
         <ViewModel />
         <FirstFrameSignal onFirstFrame={handleFirstFrame} />
         <PerfProbe />
