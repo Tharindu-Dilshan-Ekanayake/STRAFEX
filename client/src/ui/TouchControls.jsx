@@ -46,6 +46,8 @@ function actionFor(item, shield) {
 
 /** Thumbs held on a hit/use button, by button: dragging them turns the camera too. */
 const btnLook = {}
+/** Input keys a thumb holds right now (released when the controls switch to the mouse). */
+const thumbHeld = {}
 
 export default function TouchControls() {
   const [enabled, setEnabled] = useState(isTouchDevice)
@@ -60,21 +62,70 @@ export default function TouchControls() {
   const look = useRef({ id: null, x: 0, y: 0 })
   const [knob, setKnob] = useState(null)
 
+  /**
+   * The controls follow what you play with. A finger on the screen turns them on; a mouse
+   * that really moves (or clicks), or a game key on a keyboard, turns them off again - so a
+   * touch-screen laptop played with its mouse never shows the phone buttons.
+   */
   useEffect(() => {
+    let mouseTravel = 0
     const onTouch = () => {
+      mouseTravel = 0
       runtime.input.touch = true
       setEnabled(true)
     }
-    window.addEventListener('touchstart', onTouch, { once: true, passive: true })
-    return () => window.removeEventListener('touchstart', onTouch)
+    // Back to mouse and keyboard: nothing left held down by a thumb.
+    const toMouse = () => {
+      if (!runtime.input.touch && !getGame().touchUI) return
+      runtime.input.touch = false
+      runtime.input.joyX = 0
+      runtime.input.joyY = 0
+      stick.current.id = null
+      look.current.id = null
+      for (const key of Object.keys(btnLook)) delete btnLook[key]
+      for (const key of Object.keys(thumbHeld)) {
+        if (thumbHeld[key]) runtime.input[key] = false
+        delete thumbHeld[key]
+      }
+      setHeld({})
+      setSneak(false)
+      setKnob(null)
+      setEnabled(false)
+    }
+    const onPointerMove = (e) => {
+      if (e.pointerType !== 'mouse') return
+      mouseTravel += Math.abs(e.movementX || 0) + Math.abs(e.movementY || 0)
+      if (mouseTravel > 60) toMouse()
+    }
+    const onPointerDown = (e) => {
+      if (e.pointerType === 'mouse') toMouse()
+    }
+    const onKey = (e) => {
+      if (/^(Key[WASDEFQR]|Space|Digit[1-9]|Shift(Left|Right))$/.test(e.code)) toMouse()
+    }
+    window.addEventListener('touchstart', onTouch, { passive: true })
+    window.addEventListener('pointermove', onPointerMove, { passive: true })
+    window.addEventListener('pointerdown', onPointerDown, { passive: true })
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('touchstart', onTouch)
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKey)
+    }
   }, [])
 
-  // Touch layout on: the store knows (the mouse hint hides) and so does CSS (compact HUD).
+  // Touch layout on or off: the store knows (the mouse hint) and so does CSS (compact HUD).
   useEffect(() => {
-    if (!enabled) return
-    runtime.input.touch = true
-    getGame().setTouchUI(true)
-    document.body.classList.add('touch-ui')
+    if (enabled) {
+      runtime.input.touch = true
+      getGame().setTouchUI(true)
+      document.body.classList.add('touch-ui')
+      return
+    }
+    runtime.input.touch = false
+    getGame().setTouchUI(false)
+    document.body.classList.remove('touch-ui')
   }, [enabled])
 
   useEffect(() => {
@@ -135,15 +186,18 @@ export default function TouchControls() {
     onTouchStart: (e) => {
       e.stopPropagation()
       runtime.input[key] = true
+      thumbHeld[key] = true
       setHeld((h) => ({ ...h, [key]: true }))
     },
     onTouchEnd: (e) => {
       e.stopPropagation()
       runtime.input[key] = false
+      thumbHeld[key] = false
       setHeld((h) => ({ ...h, [key]: false }))
     },
     onTouchCancel: () => {
       runtime.input[key] = false
+      thumbHeld[key] = false
       setHeld((h) => ({ ...h, [key]: false }))
     },
   })
