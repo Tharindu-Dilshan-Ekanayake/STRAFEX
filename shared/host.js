@@ -115,10 +115,10 @@ export class GameHost {
    * @param {() => number} [o.random]
    */
   /**
-   * Duels are always against a real player. `duelBots` (tests only) lets a lone player
-   * in a duel queue get a bot instead.
+   * `duelBots`: someone alone in a duel queue for DUEL.botFillMs (waiting in the lobby)
+   * gets a duel against a bot instead (on by default).
    */
-  constructor({ send, onReward = () => {}, onParkour = () => {}, onAnalytics = () => {}, now = () => Date.now(), random = Math.random, log = (msg) => console.warn(msg), duelBots = false }) {
+  constructor({ send, onReward = () => {}, onParkour = () => {}, onAnalytics = () => {}, now = () => Date.now(), random = Math.random, log = (msg) => console.warn(msg), duelBots = true }) {
     this.duelBots = duelBots
     this.sendTo = send
     /** A player reached the top of the lobby parkour: `(cid, ms)`. */
@@ -463,7 +463,7 @@ export class GameHost {
    * Pairs everyone searching for a duel: two people who picked the same mode first; then
    * anyone left over with anyone else, straight away, in the mode of whoever has waited
    * longer - nobody sits in a queue while someone else in the room is searching too.
-   * (Tests with `duelBots`: someone alone long enough gets a bot.)
+   * Someone alone for DUEL.botFillMs gets a bot (unless they're playing Spirelands).
    */
   matchmake(now) {
     const waiting = new Map()
@@ -490,7 +490,9 @@ export class GameHost {
     }
     if (this.duelBots && leftover.length === 1) {
       const m = leftover[0]
-      if (now - m.queuedAt >= (this.members.size <= 1 ? DUEL.soloBotMs : DUEL.botFillMs)) this.createDuel(m.queue, [this.ents.get(m.eid), null])
+      const ent = this.ents.get(m.eid)
+      const waiting = ent?.zone === 'lobby' && !ent.arena
+      if (waiting && now - m.queuedAt >= (this.members.size <= 1 ? DUEL.soloBotMs : DUEL.botFillMs)) this.createDuel(m.queue, [ent, null])
     }
   }
 

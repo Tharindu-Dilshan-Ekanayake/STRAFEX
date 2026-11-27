@@ -115,7 +115,7 @@ jobs:
 
       - name: Roll it out on Legion
         run: |
-          curl -sS --fail-with-body -X POST "$LEGION_API/v1/apps/$GAME_ID/deploy" \
+          curl -sS --fail-with-body --retry 4 --retry-delay 15 --retry-all-errors -X POST "$LEGION_API/v1/apps/$GAME_ID/deploy" \
             -H "Authorization: Bearer $DEPLOY_TOKEN" \
             -H 'Content-Type: application/json' \
             -d "{\"channel\":\"$CHANNEL\",\"image\":\"${{ steps.meta.outputs.image }}\",\"version\":\"$GITHUB_SHA\",\"seatCap\":$SEAT_CAP}"
@@ -140,7 +140,9 @@ jobs:
       - name: Upload it to Legion
         run: |
           (cd client/dist && zip -qr ../../build.zip .)
-          curl -sS --fail-with-body -X POST \
+          # A brief hiccup on the API side (a 5xx or a dropped connection) is retried
+          # rather than failing the deploy; the body of a real error is still printed.
+          curl -sS --fail-with-body --retry 4 --retry-delay 15 --retry-all-errors -X POST \
             "$BLOXITY_API/v1/hosting/games/$GAME_ID/frontend?channel=$CHANNEL&version=$GITHUB_SHA" \
             -H "Authorization: Bearer $DEPLOY_TOKEN" \
             -H 'Content-Type: application/zip' \

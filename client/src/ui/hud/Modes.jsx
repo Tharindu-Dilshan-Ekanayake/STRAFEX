@@ -70,7 +70,6 @@ export function ModesPanel() {
   const close = useGame((s) => s.closePanel)
   const phase = useGame((s) => s.phase)
   const sword = useGame((s) => s.profile.sword)
-  const net = useGame((s) => s.net.mode)
   const pick = (id) => {
     actions.queue(id)
     close()
@@ -96,7 +95,7 @@ export function ModesPanel() {
           </button>
         </div>
         <span className="mc-note" style={{ fontSize: u(13) }}>
-          {net === 'online' ? t('1v1 duels against real players · you are paired with anyone searching (same mode first, else the mode of whoever waited longer)') : t('Duels are against real players only · offline, nobody else can join your queue')}
+          {t('1v1 duels · a real player first; nobody within 10 seconds and a bot steps in')}
         </span>
         <div className="mode-grid overflow-y-auto">
           {MODE_IDS.map((id, i) => (
