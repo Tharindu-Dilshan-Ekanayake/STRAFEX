@@ -20,12 +20,11 @@ export const DUEL = {
   /** The duel's winner on screen before both go back to the lobby. */
   endMs: 6_500,
   /**
-   * Duels are against real players: you wait in the queue until someone else joins it,
-   * online and offline. (`botFillMs` / `soloBotMs` only apply to test hosts made with
-   * `duelBots`.)
+   * Nobody else searching for this long (waiting in the lobby): a duel against an easy
+   * bot instead. Searching from Spirelands waits for a real player.
    */
-  botFillMs: 8_000,
-  soloBotMs: 2_200,
+  botFillMs: 10_000,
+  soloBotMs: 10_000,
 }
 
 /** Spirelands, the free-for-all world. */

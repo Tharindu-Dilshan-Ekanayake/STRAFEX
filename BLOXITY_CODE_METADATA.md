@@ -15,9 +15,9 @@ UHC, Mace, Spear Mace, Pot, SMP) or drop into Spirelands, a free-for-all island 
 open sea: beaches with palms, a pier, a shipwreck, a lighthouse and islets round the
 coast, a river, the ruined Spire Keep in the middle, slate spires joined by plank
 bridges, a village, ruins, ponds and jump pads. You can swim (hold jump to rise) and
-climb back out onto the shore. Duels are always against a real
-player: you wait in the queue until someone else picks the same mode - there are no
-duel bots, online or offline. When an opponent is found both vote for one of six
+climb back out onto the shore. Duels look for a real player
+first (anyone searching, any mode); nobody within 10 seconds and an easy bot steps in
+(searching from Spirelands waits for a real player). When an opponent is found both vote for one of six
 arenas (Suncourt, Meadow, Mirage, Bastion, Glade, Dunes), then fight rounds until
 someone reaches the mode's "first to" score; leaving mid-duel is a forfeit. In
 Spirelands you pick a kit, kills heal you and pay out, a three-kill streak puts a bounty

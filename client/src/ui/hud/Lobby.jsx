@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { CASES, LOBBY_SWORD, MODES } from '@shared/balance'
+import { CASES, DUEL, LOBBY_SWORD, MODES } from '@shared/balance'
 import { dailyStatus } from '@shared/logic'
 
 import { itemIcon } from '../../game/art/items'
@@ -99,6 +99,7 @@ export function QueueBar() {
         </span>
         <span className="txt-o" style={{ fontSize: u(13), color: '#e0e0e0' }}>
           {t('CASUAL')} · <span style={{ color: m?.color }}>{t(m?.name || '')}</span> {t('1v1')} · {t('{n} searching', { n: Math.max(1, Object.values(phase.searching || {}).reduce((a, b) => a + b, 0)) })}
+          {!inFfa && waited < DUEL.botFillMs && <span style={{ color: '#ffff55' }}> · {t('bot in {s}s', { s: Math.ceil((DUEL.botFillMs - waited) / 1000) })}</span>}
         </span>
       </div>
       {!inFfa && (

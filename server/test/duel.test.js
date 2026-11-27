@@ -87,20 +87,34 @@ test('two players in the same queue: map vote, rounds, a winner, rewards, back t
   assert.equal(b.zone, 'lobby')
 })
 
-test('online, duels are only against real players: alone in the queue, you wait', () => {
+test('a real opponent first; nobody within 10 seconds and a bot steps in (not while playing Spirelands)', () => {
   const h = makeHost(4)
   h.host.join('a', 'Ann')
-  h.host.message('a', 'queue', { mode: 'axe' })
-  h.tick(60_000)
-  assert.equal(h.host.arenas.size, 0, 'no bot ever steps in')
-  assert.ok(h.host.members.get('a').queue, 'still searching')
-  // Someone joins the queue: a duel between the two of them.
   h.host.join('b', 'Bo')
+  h.host.message('a', 'queue', { mode: 'axe' })
+  h.tick(DUEL.botFillMs - 1000)
+  assert.equal(h.host.arenas.size, 0, 'still looking for a real player')
+  // Someone joins in time: the two of them.
   h.host.message('b', 'queue', { mode: 'axe' })
   h.tick(200)
-  const arena = [...h.host.arenas.values()][0]
-  assert.ok(arena)
-  assert.ok(arena.fighters.every((eid) => !h.host.ents.get(eid).bot), 'two real players')
+  const duel = [...h.host.arenas.values()][0]
+  assert.ok(duel.fighters.every((eid) => !h.host.ents.get(eid).bot), 'two real players')
+  // Alone for ten seconds in the lobby: a bot.
+  const h2 = makeHost(5)
+  h2.host.join('c', 'Cy')
+  h2.host.join('d', 'Di')
+  h2.host.message('c', 'queue', { mode: 'sword' })
+  h2.tick(DUEL.botFillMs + 200)
+  const botDuel = [...h2.host.arenas.values()].find((x) => x.kind === 'duel')
+  assert.ok(botDuel, 'a bot duel')
+  assert.ok(botDuel.fighters.some((eid) => h2.host.ents.get(eid).bot))
+  // Searching from Spirelands: no bot - it waits for a real player there.
+  h2.host.message('d', 'queue', { mode: 'sword' })
+  h2.host.message('d', 'ffa', {})
+  h2.host.message('d', 'kit', { mode: 'sword' })
+  h2.tick(DUEL.botFillMs + 2000)
+  assert.equal(h2.host.entOf('d').arena, 'ffa', 'still in Spirelands')
+  assert.equal(h2.host.members.get('d').queue, 'sword', 'still searching')
 })
 
 test('test hosts with duelBots: alone in the queue, a bot steps in; play again goes straight back in the queue', () => {
