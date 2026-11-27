@@ -66,6 +66,9 @@ export const B = {
   BERRY_BUSH: 59,
   TORCH: 60,
   CAMPFIRE: 61,
+  IRON_ORE: 62,
+  DIAMOND_ORE: 63,
+  CRAFTING_TABLE: 64,
 }
 
 /**
@@ -156,6 +159,11 @@ BLOCKS[B.BERRY_BUSH] = def('Jump Berry Bush', 'berry_bush', 0.15, 'jump_berry', 
 // warms whoever sits by it (slow healing) - but don't stand in it.
 BLOCKS[B.TORCH] = def('Torch', 'torch', 0, 'torch', { solid: false, render: 'cross', glow: true, light: 7 })
 BLOCKS[B.CAMPFIRE] = def('Campfire', 'campfire', 0.4, 'campfire', { solid: false, render: 'cross', glow: true, light: 10 })
+// Spirelands' resources: iron in the stone (and round the caves), diamonds deep down. A
+// crafting table is where kit gear is upgraded and new weapons made.
+BLOCKS[B.IRON_ORE] = def('Iron Ore', 'iron_ore', 2.2, 'iron')
+BLOCKS[B.DIAMOND_ORE] = def('Diamond Ore', 'diamond_ore', 3.2, 'diamond')
+BLOCKS[B.CRAFTING_TABLE] = def('Crafting Table', ['table_top', 'table_side', 'planks'], 1, 'crafting_table')
 // How far the other glowing blocks light the dark (in blocks; night only).
 BLOCKS[B.LANTERN].light = 8
 BLOCKS[B.LAMP].light = 8

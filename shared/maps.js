@@ -346,7 +346,9 @@ export function generateSpirelands(seed = FFA_SEED) {
         if (sandy) id = fromTop < 3 ? B.SAND : fromTop < 5 ? B.SANDSTONE : B.STONE
         else if (fromTop === 0) id = B.GRASS
         else if (fromTop < 3) id = B.DIRT
-        else if (rng() < 0.05) id = B.ORE
+        // Ore in the stone: iron here and there, diamonds only deep down.
+        else if (y < 9 && rng() < 0.012) id = B.DIAMOND_ORE
+        else if (rng() < 0.05) id = B.IRON_ORE
         world.set(x, y, z, id)
       }
       for (let y = h + 1; y <= SEA; y += 1) world.set(x, y, z, B.WATER)
@@ -390,6 +392,85 @@ export function generateSpirelands(seed = FFA_SEED) {
     }
   }
   built.push([CX, CZ, KEEP_R + 3])
+
+  // --- Mountains: a range of stone peaks, snow on top, iron in their flanks ---------------
+  const MOUNT_A = -0.7
+  const MOUNT_R = ISLAND_R * 0.5
+  const mountains = [
+    [MOUNT_A, MOUNT_R, 13, 24],
+    [MOUNT_A + 0.32, MOUNT_R + 6, 10, 18],
+    [MOUNT_A - 0.3, MOUNT_R - 3, 9, 16],
+  ].map(([a, r, rad, hgt]) => ({ x: Math.round(CX + Math.cos(a) * r), z: Math.round(CZ + Math.sin(a) * r), rad, hgt }))
+  for (const m of mountains) {
+    for (let x = m.x - m.rad - 2; x <= m.x + m.rad + 2; x += 1) {
+      for (let z = m.z - m.rad - 2; z <= m.z + m.rad + 2; z += 1) {
+        if (x < 8 || z < 8 || x >= SX - 8 || z >= SZ - 8) continue
+        const d = Math.hypot(x - m.x, z - m.z) / m.rad
+        if (d >= 1) continue
+        const base = top(x, z)
+        if (base <= SEA + 1) continue
+        // Smooth slopes (bumpy ones cost many small faces to draw).
+        const add = Math.round(m.hgt * (1 - d) ** 1.25 + (n2(x, z) - 0.5) * 1.2)
+        if (add <= 0) continue
+        const h = Math.min(SY - 8, base + add)
+        if (h <= base) continue
+        // Iron only well inside the mountain: an ore block on the outside breaks the big
+        // merged faces into many small ones. The caves cut through it.
+        for (let y = base; y < h; y += 1) world.set(x, y, z, y < h - 4 && rng() < 0.06 ? B.IRON_ORE : B.STONE)
+        world.set(x, h, z, h > SEA + 22 ? B.SNOW : add < 5 ? B.GRASS : B.STONE)
+        setTop(x, z, h)
+      }
+    }
+    built.push([m.x, m.z, m.rad + 2])
+  }
+
+  // --- Caves: tunnels winding down into the mountains and hills; iron and diamonds round
+  // their walls, a lantern now and then --------------------------------------------------------
+  const carve = (cx, cy, cz, r) => {
+    for (let x = Math.floor(cx - r); x <= Math.ceil(cx + r); x += 1) {
+      for (let y = Math.max(3, Math.floor(cy - r)); y <= Math.ceil(cy + r); y += 1) {
+        for (let z = Math.floor(cz - r); z <= Math.ceil(cz + r); z += 1) {
+          if (x < 8 || z < 8 || x >= SX - 8 || z >= SZ - 8) continue
+          if (Math.hypot(x - cx, y - cy, z - cz) > r) continue
+          const id = world.get(x, y, z)
+          if (id === B.WATER || id === B.CORESTONE || id === B.AIR) continue
+          world.set(x, y, z, B.AIR)
+        }
+      }
+    }
+  }
+  const caveStarts = [...mountains.map((m) => [m.x + Math.round(m.rad * 0.6), m.z]), ...mountains.map((m) => [m.x, m.z - Math.round(m.rad * 0.6)])]
+  {
+    const spot = randomLand(16)
+    if (spot && clear(spot[0], spot[1], 4)) caveStarts.push(spot)
+  }
+  for (const [sx0, sz0] of caveStarts) {
+    let x = sx0 + 0.5
+    let z = sz0 + 0.5
+    let y = top(sx0, sz0) - 1
+    let yaw = rng() * Math.PI * 2
+    let pitch = -0.35
+    const steps = 34 + Math.floor(rng() * 16)
+    for (let s = 0; s < steps; s += 1) {
+      const r = 1.4 + rng() * 0.7
+      carve(x, y, z, r)
+      // Ore in the walls round the tunnel.
+      for (let q = 0; q < 6; q += 1) {
+        const ox = Math.round(x + (rng() - 0.5) * (r * 2 + 2))
+        const oy = Math.round(y + (rng() - 0.5) * (r * 2 + 2))
+        const oz = Math.round(z + (rng() - 0.5) * (r * 2 + 2))
+        if (world.get(ox, oy, oz) !== B.STONE) continue
+        if (oy < 12 && rng() < 0.22) world.set(ox, oy, oz, B.DIAMOND_ORE)
+        else if (rng() < 0.45) world.set(ox, oy, oz, B.IRON_ORE)
+      }
+      if (s % 12 === 6 && world.isSolid(Math.floor(x), Math.floor(y - r) - 1, Math.floor(z))) world.set(Math.floor(x), Math.floor(y - r), Math.floor(z), B.LANTERN)
+      yaw += (rng() - 0.5) * 0.7
+      pitch = Math.max(-0.6, Math.min(0.15, pitch + (rng() - 0.5) * 0.25))
+      x += Math.cos(yaw) * Math.cos(pitch)
+      z += Math.sin(yaw) * Math.cos(pitch)
+      y = Math.max(5, y + Math.sin(pitch))
+    }
+  }
 
   // --- The coast: palms along the beach, a pier, a shipwreck, a lighthouse, islets -------
   for (let k = 0; k < Math.round(36 * COAST); k += 1) {
@@ -733,6 +814,23 @@ export function generateSpirelands(seed = FFA_SEED) {
     world.set(x, g + 1, z, B.LOOT_CHEST)
     chests.push({ x, y: g + 1, z })
   }
+  // Crafting tables about the island (and one at each cave mouth).
+  const tableAt = (x, z) => {
+    const g = world.surface(x, z)
+    if (g < 0 || g + 1 <= SEA || world.get(x, g + 1, z) !== B.AIR) return false
+    world.set(x, g + 1, z, B.CRAFTING_TABLE)
+    return true
+  }
+  let tables = 0
+  for (let tries = 0; tries < 2000 && tables < Math.round(8 * AREA); tries += 1) {
+    const x = 14 + Math.floor(rng() * (SX - 28))
+    const z = 14 + Math.floor(rng() * (SZ - 28))
+    const g = world.surface(x, z)
+    if (g < 0 || world.get(x, g, z) !== B.GRASS || spawns.some((s) => Math.hypot(s.x - x, s.z - z) < 4)) continue
+    if (chests.some((c) => Math.hypot(c.x - x, c.z - z) < 3)) continue
+    if (tableAt(x, z)) tables += 1
+  }
+  for (const [sx0, sz0] of caveStarts) tableAt(sx0 + 2, sz0 + 2)
   return { world, spawns, chests, center: { x: CX + 0.5, y: 21, z: CZ + 4.5 } }
 }
 

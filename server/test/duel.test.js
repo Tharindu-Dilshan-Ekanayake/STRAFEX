@@ -438,7 +438,7 @@ test('mining fills your inventory; crafting turns it into gear', () => {
   for (const s of a.inv) if (s?.id === 'planks') s.n = 1
   host.message('a', 'craft', { id: 'shield' })
   assert.equal(host.count(a, 'shield'), shields + 1)
-  assert.ok(RECIPES.every((r) => r.need.length && r.out[1] > 0))
+  assert.ok(RECIPES.every((r) => r.need.length && (r.out?.[1] > 0 || r.armor || r.repair)))
 })
 
 test('a fire arrow sets the ground and its target alight; water puts it out', () => {

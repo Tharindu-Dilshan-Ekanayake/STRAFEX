@@ -173,6 +173,32 @@ const SPRITES = {
       for (let x = 4; x <= 11; x += 1) put(x, 7, '#2f6fd8')
     }
   },
+  ingot: (px) => {
+    const { put } = painters(px)
+    // A bar of iron, lit along its top.
+    for (let y = 6; y <= 11; y += 1) {
+      for (let x = 2 + (11 - y); x <= 13 - (y - 6); x += 1) put(x, y, y === 6 ? '#ffffff' : y < 9 ? '#d9dde5' : '#a9b0bd')
+    }
+    for (let x = 4; x <= 12; x += 1) put(x, 12, '#6b7280')
+  },
+  gem: (px) => {
+    const { put } = painters(px)
+    // A cut diamond.
+    for (let y = 3; y < 14; y += 1) {
+      const half = y < 7 ? (y - 3) * 1.6 + 2 : (13 - y) * 0.9 + 1
+      for (let x = Math.round(8 - half); x <= Math.round(7 + half); x += 1) put(x, y, y < 6 ? '#e8ffff' : (x + y) % 3 ? '#5fe8e0' : '#2fb8b0')
+    }
+    put(6, 5, '#ffffff')
+  },
+  pickaxe: (px, opts) => {
+    const { put } = painters(px)
+    const [head] = (TIERS[opts.tier] || TIERS.iron).map(hex)
+    for (let k = 0; k < 11; k += 1) put(2 + k, 13 - k, k % 2 ? '#8a5a2b' : '#6b4420')
+    // The head: a curved bar across the top of the haft.
+    for (const [x, y] of [[4, 3], [5, 2], [6, 2], [7, 2], [8, 2], [9, 3], [10, 4], [11, 5], [12, 6], [13, 7], [3, 4], [12, 8]]) put(x, y, head)
+    put(6, 3, darker(head, 0.75))
+    put(11, 6, darker(head, 0.75))
+  },
   torch: (px) => {
     const { put } = painters(px)
     for (let k = 0; k < 9; k += 1) put(4 + k, 14 - k, k % 2 ? '#8a5a2b' : '#6b4420')

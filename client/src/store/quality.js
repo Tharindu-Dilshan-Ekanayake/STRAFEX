@@ -39,9 +39,9 @@ export const PRESETS = {
     /**
      * Characters drawn as their Bloxity avatar (you included; real players first, then
      * the nearest); the rest blocky. A duel is two, so everyone you fight is their
-     * avatar; in a packed Spirelands the nearest six are (keeps phones in budget).
+     * avatar; in a packed Spirelands the nearest four are (keeps phones in budget).
      */
-    avatarCount: 6,
+    avatarCount: 4,
     botAvatars: true,
     /** No avatar beyond this (blocks): as far as other players are drawn at all. */
     avatarDistance: 110,

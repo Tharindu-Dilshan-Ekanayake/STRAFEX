@@ -487,6 +487,50 @@ const TILES = {
     p.noise('#3a2a1a', 0.1)
     for (let y = 5; y < 11; y += 1) for (let x = 5; x < 11; x += 1) p.put(x, y, hex('#ffd774'))
   },
+  iron_ore: (p) => {
+    // Stone flecked with tan iron.
+    p.noise('#8f8f8f', 0.16)
+    for (let k = 0; k < 7; k += 1) {
+      const x = 1 + Math.floor(p.rng() * 13)
+      const y = 1 + Math.floor(p.rng() * 13)
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) if (p.rng() < 0.8) p.put(x + dx, y + dy, p.vary(hex(k % 2 ? '#d8af93' : '#c08a6a'), 0.1))
+    }
+  },
+  diamond_ore: (p) => {
+    // Stone with glinting cyan gems.
+    p.noise('#8a8a8a', 0.16)
+    for (let k = 0; k < 6; k += 1) {
+      const x = 1 + Math.floor(p.rng() * 13)
+      const y = 1 + Math.floor(p.rng() * 13)
+      p.put(x, y, hex('#e8ffff'))
+      p.put(x + 1, y, hex('#5fe8e0'))
+      p.put(x, y + 1, hex('#5fe8e0'))
+      p.put(x + 1, y + 1, hex('#2fb8b0'))
+    }
+  },
+  table_top: (p) => {
+    // A planked top with a tool grid.
+    p.noise('#a8703a', 0.1)
+    const line = hex('#5a3a1a')
+    for (let i = 0; i < T; i += 1) {
+      p.put(i, 0, line)
+      p.put(i, 15, line)
+      p.put(0, i, line)
+      p.put(15, i, line)
+      p.put(i, 5, line)
+      p.put(i, 10, line)
+      p.put(5, i, line)
+      p.put(10, i, line)
+    }
+  },
+  table_side: (p) => {
+    // Planks with a saw and a hammer hung on them.
+    p.noise('#9a6634', 0.1)
+    for (let x = 0; x < T; x += 1) for (const y of [0, 4, 15]) p.put(x, y, hex('#5a3a1a'))
+    for (let x = 3; x <= 7; x += 1) p.put(x, 8, hex('#c9ced8'))
+    for (let y = 6; y <= 11; y += 1) p.put(11, y, hex('#6b4420'))
+    for (let x = 10; x <= 13; x += 1) p.put(x, 6, hex('#9aa3b2'))
+  },
   torch: (p) => {
     // A stick with a flame on top.
     p.clear()

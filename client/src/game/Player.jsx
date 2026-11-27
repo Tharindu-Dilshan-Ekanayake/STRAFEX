@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 
 import { useFrame, useThree } from '@react-three/fiber'
 import { Vector3 } from 'three'
-import { breakSeconds, COMBAT, EFFECTS, ITEMS, MELEE_KINDS, OFFHAND } from '@shared/balance'
+import { breakSeconds, COMBAT, EFFECTS, ITEMS, MELEE_KINDS, mineSpeed, OFFHAND } from '@shared/balance'
 import { PLAYER, stepBody } from '@shared/physics'
 import { B, BLOCKS, blockKey, isWater, rayBox } from '@shared/voxel'
 
@@ -322,7 +322,7 @@ function act(st, world, now, dt, b, dx, dy, dz) {
           dig.progress = 0
           send('dig', { x: target.x, y: target.y, z: target.z })
         }
-        const need = Math.max(0.05, breakSeconds(def.hard))
+        const need = Math.max(0.05, breakSeconds(def.hard, mineSpeed(heldId(), def.hard)))
         dig.progress += dt / need
         if (now - runtime.swingAt > 250) runtime.swingAt = now
         if (now - st.digSoundAt > 200) {

@@ -285,3 +285,85 @@ test('a full server: looks go out only when they change, kills send a small upda
   assert.ok(!eids.includes(d.eid), 'far player not sent')
   assert.ok(eids.includes(c.eid), 'yourself (and anyone near) still in it')
 })
+
+test('Spirelands resources: iron and diamond ore (diamonds deep), mountains, caves and crafting tables', async () => {
+  const { B } = await import('../../shared/voxel.js')
+  const { world } = generateSpirelands()
+  let iron = 0
+  let diamond = 0
+  let deepest = 0
+  let tables = 0
+  let caveAir = 0
+  let peak = 0
+  for (let x = 0; x < world.sx; x += 1) {
+    for (let z = 0; z < world.sz; z += 1) {
+      const top = world.surface(x, z)
+      if (top > peak) peak = top
+      for (let y = 0; y < world.sy; y += 1) {
+        const id = world.get(x, y, z)
+        if (id === B.IRON_ORE) iron += 1
+        else if (id === B.DIAMOND_ORE) {
+          diamond += 1
+          deepest = Math.max(deepest, y)
+        } else if (id === B.CRAFTING_TABLE) tables += 1
+        else if (id === B.AIR && y > 3 && y < top - 2) caveAir += 1
+      }
+    }
+  }
+  assert.ok(iron > 500, `iron ore (${iron})`)
+  assert.ok(diamond > 20 && diamond < iron / 4, `diamonds, rarer (${diamond})`)
+  assert.ok(deepest < 16, 'diamonds only deep down')
+  assert.ok(tables >= 8, `crafting tables (${tables})`)
+  assert.ok(caveAir > 300, `caves under the surface (${caveAir} air cells)`)
+  assert.ok(peak > 34, `mountains (highest ground ${peak})`)
+})
+
+test('upgrades: at a crafting table, mined iron and diamonds make better gear; armour only ever goes up', async () => {
+  const { B } = await import('../../shared/voxel.js')
+  const { ARMOR, breakSeconds, mineSpeed } = await import('../../shared/balance.js')
+  const h = makeHost()
+  const { host } = h
+  host.join('a', 'Ann')
+  host.message('a', 'ffa', {})
+  host.message('a', 'kit', { mode: 'sword' })
+  h.tick(200)
+  const a = host.entOf('a')
+  const arena = host.arenas.get('ffa')
+  host.give(a, 'iron', 30)
+  host.give(a, 'diamond', 20)
+  host.give(a, 'planks', 20)
+  host.give(a, 'obsidian', 2)
+  // Away from any table: refused.
+  const tableNear = () => host.nearTable(a)
+  if (tableNear()) Object.assign(a, { x: 30.5, z: 30.5 })
+  const before = host.count(a, 'iron')
+  host.message('a', 'craft', { id: 'iron_pickaxe' })
+  if (!tableNear()) {
+    assert.equal(host.count(a, 'iron_pickaxe'), 0, 'needs a crafting table')
+    assert.equal(host.count(a, 'iron'), before)
+  }
+  // Put a table beside her: now it works.
+  const x = Math.floor(a.x) + 1
+  const z = Math.floor(a.z)
+  arena.world.set(x, Math.floor(a.y), z, B.CRAFTING_TABLE)
+  host.message('a', 'craft', { id: 'iron_pickaxe' })
+  assert.equal(host.count(a, 'iron_pickaxe'), 1)
+  host.message('a', 'craft', { id: 'cinder_sword' })
+  assert.equal(host.count(a, 'cinder_sword'), 1, 'the kit diamond sword upgraded')
+  assert.equal(host.count(a, 'diamond_sword'), 0, 'used up in the upgrade')
+  // Armour: the sword kit wears diamond. Iron is a step down: refused. Cindersteel: yes.
+  assert.equal(a.armor.tier, 'diamond')
+  host.message('a', 'craft', { id: 'armor_iron' })
+  assert.equal(a.armor.tier, 'diamond')
+  host.give(a, 'obsidian', 6)
+  host.message('a', 'craft', { id: 'armor_cinder' })
+  assert.equal(a.armor.tier, 'cindersteel')
+  assert.deepEqual(a.armor.dura, ARMOR.cindersteel.dura)
+  // Worn armour mended with iron.
+  a.armor.dura[1] = 10
+  host.message('a', 'craft', { id: 'armor_repair' })
+  assert.equal(a.armor.dura[1], ARMOR.cindersteel.dura[1])
+  // The pickaxe mines stone and ore three times as fast; dirt no faster.
+  assert.equal(breakSeconds(2.2, mineSpeed('iron_pickaxe', 2.2)), 2.2 / 3)
+  assert.equal(mineSpeed('iron_pickaxe', 0.5), 1)
+})

@@ -380,7 +380,7 @@ export function handleServerEvent(type, p = {}) {
       return
     case 'crafted':
       sfx.buy()
-      game.showToast(t('Crafted {item}', { item: `${p.n > 1 ? `${p.n} x ` : ''}${t(ITEMS[p.id]?.name || p.id)}` }), 'success')
+      game.showToast(t('Crafted {item}', { item: `${p.n > 1 ? `${p.n} x ` : ''}${t(p.name || ITEMS[p.id]?.name || p.id)}` }), 'success')
       return
     case 'douse':
       pushFx({ type: 'douse', x: p.x, y: p.y, z: p.z })

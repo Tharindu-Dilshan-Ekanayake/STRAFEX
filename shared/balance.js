@@ -168,6 +168,12 @@ export const ITEMS = {
   // Light for the night (crafted from wood). `sprite`: shown as a picture, not a cube.
   torch: { name: 'Torch', kind: 'block', block: B.TORCH, icon: 'torch', sprite: true, stack: 64 },
   campfire: { name: 'Campfire', kind: 'block', block: B.CAMPFIRE, icon: 'campfire', sprite: true, stack: 16 },
+  // Mined in Spirelands (iron ore, diamond ore) and made into upgrades at a crafting table.
+  iron: { name: 'Iron Ingot', kind: 'material', icon: 'ingot', stack: 64 },
+  diamond: { name: 'Diamond', kind: 'material', icon: 'gem', stack: 64 },
+  crafting_table: { name: 'Crafting Table', kind: 'block', block: B.CRAFTING_TABLE, icon: 'block', stack: 16 },
+  // Mines stone and ore `mine` times as fast (and hits like a light weapon).
+  iron_pickaxe: { name: 'Iron Pickaxe', kind: 'pickaxe', dmg: 3, cd: 250, icon: 'pickaxe', tier: 'iron', mine: 3, stack: 1 },
 }
 
 /** A campfire warms whoever is within `radius`: `heal` every `everyMs`. */
@@ -229,8 +235,16 @@ export const LOOT = {
     ['bucket', 1, 3],
     ['charm', 1, 2],
     ['jump_berry', 3, 8],
+    ['iron', 4, 8],
+    ['diamond', 1, 3],
+    ['crafting_table', 1, 2],
   ],
 }
+
+/** Armour tiers, worst to best (crafting only ever upgrades). */
+export const ARMOR_RANK = { none: 0, iron: 1, diamond: 2, cindersteel: 3 }
+/** A crafting table within this many blocks counts as "at" one. */
+export const TABLE_REACH = 4
 
 /**
  * Breath: with your head under water you have `ms` of air (shown as `bubbles`); then you
@@ -256,10 +270,25 @@ export const RECIPES = [
   { id: 'gapple', out: ['gapple', 1], need: [['jump_berry', 4]], blurb: 'Heals and shields you' },
   { id: 'torch', out: ['torch', 4], need: [['planks', 2]], blurb: 'Light the night' },
   { id: 'campfire', out: ['campfire', 1], need: [['planks', 4], ['stone_bricks', 2]], blurb: 'Big light; sit by it to heal' },
+  { id: 'crafting_table', out: ['crafting_table', 1], need: [['planks', 4]], blurb: 'Upgrades and new weapons are made at one' },
+  // At a crafting table (`table`): mined iron and diamonds into better gear.
+  { id: 'iron_pickaxe', table: true, out: ['iron_pickaxe', 1], need: [['iron', 3], ['planks', 2]], blurb: 'Mines stone and ore 3x faster' },
+  { id: 'diamond_sword', table: true, out: ['diamond_sword', 1], need: [['diamond', 2], ['planks', 1]], blurb: 'A diamond blade' },
+  { id: 'diamond_axe', table: true, out: ['diamond_axe', 1], need: [['diamond', 3], ['planks', 2]], blurb: 'Knocks shields down' },
+  { id: 'cinder_sword', table: true, out: ['cinder_sword', 1], need: [['diamond_sword', 1], ['diamond', 2], ['obsidian', 2]], blurb: 'Upgrade: diamond sword to Cindersteel' },
+  { id: 'cinder_axe', table: true, out: ['cinder_axe', 1], need: [['diamond_axe', 1], ['diamond', 2], ['obsidian', 2]], blurb: 'Upgrade: diamond axe to Cindersteel' },
+  { id: 'mace', table: true, out: ['mace', 1], need: [['iron', 4], ['diamond', 1]], blurb: 'Smashes harder the further you fall' },
+  { id: 'spear', table: true, out: ['spear', 1], need: [['planks', 3], ['iron', 2]], blurb: 'Long reach; right click lunges' },
+  { id: 'bow', table: true, out: ['bow', 16], need: [['planks', 3], ['iron', 1]], blurb: 'A bow and 16 arrows' },
+  // Armour: a whole set at once (only up), or mended back to full.
+  { id: 'armor_iron', table: true, armor: 'iron', name: 'Iron Armour', need: [['iron', 10]], blurb: 'A full set of iron armour' },
+  { id: 'armor_diamond', table: true, armor: 'diamond', name: 'Diamond Armour', need: [['diamond', 10]], blurb: 'A full set of diamond armour' },
+  { id: 'armor_cinder', table: true, armor: 'cindersteel', name: 'Cindersteel Armour', need: [['diamond', 6], ['obsidian', 6]], blurb: 'Upgrade: the toughest armour' },
+  { id: 'armor_repair', table: true, repair: true, name: 'Repair Armour', need: [['iron', 3]], blurb: 'Your armour back to full' },
 ]
 
 /** Melee weapons (what a hit counts as, and what bots pick to fight with). */
-export const MELEE_KINDS = new Set(['sword', 'axe', 'mace', 'spear', 'none', 'shield'])
+export const MELEE_KINDS = new Set(['sword', 'axe', 'mace', 'spear', 'none', 'shield', 'pickaxe'])
 
 /** What everyone holds in the lobby (shown with their sword skin; it does no damage). */
 export const LOBBY_SWORD = 'diamond_sword'
@@ -279,7 +308,10 @@ export const MELEE_REACH = COMBAT.reach
 /** Fastest the client sends swings (ms); the real limit is each weapon's `cd`. */
 export const ATTACK_COOLDOWN_MS = 90
 /** Seconds to break a block by hand (no tools in STRAFEX). */
-export const breakSeconds = (hard) => hard
+export const breakSeconds = (hard, mine = 1) => hard / mine
+
+/** How much faster the item `id` mines a block this hard (a pickaxe on stone and ore). */
+export const mineSpeed = (id, hard) => (ITEMS[id]?.mine && hard >= 1 ? ITEMS[id].mine : 1)
 
 /** Potion effects: what they multiply. */
 export const EFFECTS = {

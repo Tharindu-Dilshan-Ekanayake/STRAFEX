@@ -1,6 +1,7 @@
 import {
   AIR,
   ARMOR,
+  ARMOR_RANK,
   armorReduce,
   BOT_LEVELS,
   BOT_NAMES,
@@ -22,6 +23,7 @@ import {
   kitHotbar,
   LOBBY_SWORD,
   LOOT,
+  mineSpeed,
   MELEE_KINDS,
   MODE_IDS,
   MODES,
@@ -31,6 +33,7 @@ import {
   QUICK_CHAT_MS,
   REACH,
   RECIPES,
+  TABLE_REACH,
   SPLASH,
   WATER,
 } from './balance.js'
@@ -1194,10 +1197,40 @@ export class GameHost {
     }
   }
 
+  /** Is there a crafting table within TABLE_REACH of `ent`? */
+  nearTable(ent) {
+    const w = this.arenas.get(ent.arena)?.world
+    if (!w) return false
+    const x0 = Math.floor(ent.x)
+    const y0 = Math.floor(ent.y)
+    const z0 = Math.floor(ent.z)
+    for (let dy = -2; dy <= 3; dy += 1) {
+      for (let dx = -TABLE_REACH; dx <= TABLE_REACH; dx += 1) {
+        for (let dz = -TABLE_REACH; dz <= TABLE_REACH; dz += 1) if (w.get(x0 + dx, y0 + dy, z0 + dz) === B.CRAFTING_TABLE) return true
+      }
+    }
+    return false
+  }
+
   craft(ent, id) {
     if (ent.zone !== 'match' || !ent.alive) return
     const r = RECIPES.find((x) => x.id === id)
     if (!r || !r.need.every(([item, n]) => this.count(ent, item) >= n)) return
+    const say = (text) => ent.cid && this.sendTo(ent.cid, 'toast', { text, kind: 'error' })
+    if (r.table && !this.nearTable(ent)) return say('Stand by a crafting table')
+    // Armour: a whole set, only ever better; or mended back to full.
+    if (r.armor || r.repair) {
+      const tier = ent.armor?.tier || 'none'
+      if (r.armor && ARMOR_RANK[r.armor] <= ARMOR_RANK[tier]) return say('Your armour is already as good')
+      if (r.repair && (tier === 'none' || ent.armor.dura.every((d, i) => d >= ARMOR[tier].dura[i]))) return say('Nothing to repair')
+      for (const [item, n] of r.need) this.takeItem(ent, item, n)
+      const next = r.armor || tier
+      ent.armor = { tier: next, dura: [...ARMOR[next].dura] }
+      ent.dirty = true
+      this.rosterDirty = true
+      if (ent.cid) this.sendTo(ent.cid, 'crafted', { id: r.id, n: 1, name: r.name })
+      return
+    }
     for (const [item, n] of r.need) this.takeItem(ent, item, n)
     const got = this.give(ent, r.out[0], r.out[1])
     // No room for it after all: everything goes back.
@@ -1320,7 +1353,7 @@ export class GameHost {
     const key = blockKey(x, y, z)
     if (!def || id === B.AIR || !Number.isFinite(def.hard) || !this.inReach(ent, x, y, z)) return this.reject(ent, x, y, z)
     if (arena.protect && !arena.placed.has(key)) return this.reject(ent, x, y, z)
-    const need = breakSeconds(def.hard) * 1000
+    const need = breakSeconds(def.hard, mineSpeed(this.heldItem(ent), def.hard)) * 1000
     const dig = ent.dig
     if (need > 60 && (!dig || dig.key !== key || this.now() - dig.at < need * 0.7 - 150)) return this.reject(ent, x, y, z)
     ent.dig = null
