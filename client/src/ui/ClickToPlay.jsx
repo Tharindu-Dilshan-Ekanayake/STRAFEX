@@ -3,9 +3,31 @@ import { useEffect } from 'react'
 import { requestPointerLock } from '../game/input'
 import { runtime } from '../game/runtime'
 import { useGame } from '../store/game'
-import { u } from './format'
+import { u, useNow } from './format'
 import { t } from './i18n'
 import { isTouchDevice } from './device'
+
+/** The Esc hint shows this long from the first time the mouse is captured (input.js notes when). */
+const ESC_HINT_MS = 20_000
+
+/**
+ * The first 20 seconds the mouse is captured: "Press Esc to unlock the mouse", at the top
+ * of the screen in Minecraft's chat style. Desktop only; gone for good after that.
+ */
+export function EscHint() {
+  const locked = useGame((s) => s.pointerLocked)
+  const touchUI = useGame((s) => s.touchUI)
+  const now = useNow(1000)
+  const first = runtime.firstLockAt
+  if (!locked || touchUI || runtime.input.touch || isTouchDevice() || !first || now - first > ESC_HINT_MS) return null
+  return (
+    <div className="esc-hint pointer-events-none absolute left-1/2 z-10 -translate-x-1/2" style={{ top: '18%' }}>
+      <div className="mc-hud mc-text" style={{ padding: `${u(6)} ${u(14)}`, fontSize: u(15) }}>
+        {t('Press')} <span style={{ color: '#ffff55' }}>ESC</span> {t('to unlock the mouse')}
+      </div>
+    </div>
+  )
+}
 
 /**
  * Desktop: clicking the 3D view captures the mouse (Esc lets it go, for the menus).
@@ -18,6 +40,8 @@ export default function ClickToPlay() {
   const result = useGame((s) => s.result)
   const zone = useGame((s) => s.zone)
   const touchUI = useGame((s) => s.touchUI)
+  // A menu that needs the mouse is up: the kit picker, the map vote, a duel's result.
+  const menu = useGame((s) => Boolean(s.duelOver) || (s.phase.kind === 'ffa' && s.phase.needKit) || (s.phase.kind === 'duel' && s.phase.phase === 'vote'))
 
   useEffect(() => {
     const onDown = (e) => {
@@ -30,13 +54,15 @@ export default function ClickToPlay() {
 
   // Touch screens get touch controls, not a mouse hint (the same check TouchControls uses,
   // and its store flag for screens that only reveal touch on the first tap).
-  if (locked || panel || caseOpen || touchUI || runtime.input.touch || isTouchDevice() || (result && result.kind !== 'over')) return null
+  if (locked || panel || caseOpen || menu || touchUI || runtime.input.touch || isTouchDevice() || (result && result.kind !== 'over')) return null
   return (
     <div className="pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 text-center" style={{ top: '62%' }}>
-      <div className="mc-panel txt-o" style={{ padding: `${u(8)} ${u(18)}`, fontSize: u(20), opacity: 0.92 }}>
+      <div className="mc-hud txt-o" style={{ padding: `${u(8)} ${u(18)}`, fontSize: u(20) }}>
         {zone === 'match' ? t('CLICK TO PLAY') : t('CLICK TO LOOK AROUND')}
         <div style={{ fontSize: u(14), color: '#cfc6ee', marginTop: u(4) }}>
-          WASD move · Space jump · Shift sneak · {zone === 'match' ? 'L-click break/hit · R-click place/use' : 'E open cases · Esc menu'}
+          {zone === 'match'
+            ? t('WASD move · Shift sprint · C sneak · Space jump · L-click hit · R-click block / use / eat (hold) · 1-9 items')
+            : t('WASD move · E use a station (Duels, Spirelands, cases) · Esc menu')}
         </div>
       </div>
     </div>

@@ -3,7 +3,7 @@ import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import GameController from './GameController'
 import GameScene from './game/GameScene'
 import { useGame } from './store/game'
-import ClickToPlay from './ui/ClickToPlay'
+import ClickToPlay, { EscHint } from './ui/ClickToPlay'
 import HUD from './ui/HUD'
 import LoadingScreen from './ui/LoadingScreen'
 import ReplacedOverlay from './ui/ReplacedOverlay'
@@ -35,12 +35,15 @@ function App() {
       <GameScene onReady={handleReady} />
       <div id="nameplates" />
       <div id="hurt-vignette" />
+      <div id="water-overlay" />
+      <div id="burn-vignette" />
       <div className="screen-vignette" />
       {ready && (
         <>
           <HUD />
           <ResultOverlay />
           <ClickToPlay />
+          <EscHint />
           <TouchControls />
           <Suspense fallback={null}>
             <Panels />

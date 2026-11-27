@@ -8,6 +8,7 @@ import { useBloxityStore } from '../bloxity/store'
 import { useGame } from '../store/game'
 import { RENDER_SCALES, useQuality } from '../store/quality'
 import ErrorBoundary from '../ui/ErrorBoundary'
+import { day } from './dayNight'
 import { warmItemModels } from './art/items'
 import Characters from './Characters'
 import { BlockOutline, Liquid, Motes, Sky } from './Environment'
@@ -16,7 +17,14 @@ import PerfGuard from './PerfGuard'
 import PerfProbe from './PerfProbe'
 import ViewModel from './ViewModel'
 import Terrain from './voxel/Terrain'
+import { avatarShown } from './avatar/state'
 import { enterLobby, worldState } from './world'
+
+/**
+ * After the first frame, the loading screen waits this long at most for your own avatar
+ * (so you never see a stand-in body first), then lets you in regardless.
+ */
+const AVATAR_WAIT_MS = 3000
 
 // r3f-perf: dev-only overlay (?perf in the URL); the DEV check drops it from builds.
 const DevPerf = import.meta.env.DEV ? lazy(() => import('r3f-perf').then((m) => ({ default: m.Perf }))) : null
@@ -56,6 +64,26 @@ function ViewDistance({ far }) {
  * The 3D view: renderer lifecycle, quality-driven settings, automatic preset drops when
  * FPS falls under budget, and recovery from a lost WebGL context.
  */
+/** Light for the avatars only (the blocks' shading is baked into the terrain): dims at night. */
+function DayLights() {
+  const hemi = useRef(null)
+  const sun = useRef(null)
+  useFrame(() => {
+    const k = day.active ? day.light : 1
+    if (hemi.current) hemi.current.intensity = 2.2 * k
+    if (sun.current) {
+      sun.current.intensity = 1.9 * k * (day.moon ? 0.4 : 1)
+      sun.current.color.copy(day.tint)
+    }
+  })
+  return (
+    <>
+      <hemisphereLight ref={hemi} args={['#eaf4ff', '#9a8466', 2.2]} />
+      <directionalLight ref={sun} position={[42, 60, -82]} intensity={1.9} color="#fff1d6" />
+    </>
+  )
+}
+
 export function GameScene({ onReady }) {
   const { game } = useBloxity()
   const settings = useQuality((s) => s.settings)
@@ -79,16 +107,28 @@ export function GameScene({ onReady }) {
   }, [game])
 
   useEffect(() => {
-    if (!firstFrame || readySent.current) return
-    readySent.current = true
-    performance.mark('pp:ready')
-    game.loadingEnd()
-    onReady?.()
-    // Not needed for the first frame: the audio engine, and every item's model and icon
-    // (built ahead so nothing is made mid-fight).
-    const idle = (fn, ms) => ('requestIdleCallback' in window ? requestIdleCallback(fn, { timeout: ms }) : setTimeout(fn, 200))
-    idle(prepareAudio, 1500)
-    idle(warmItemModels, 3000)
+    if (!firstFrame || readySent.current) return undefined
+    game.loadingStep('Loading your avatar…')
+    const started = performance.now()
+    let id = 0
+    const check = () => {
+      if (!avatarShown.has('self') && performance.now() - started < AVATAR_WAIT_MS) {
+        id = setTimeout(check, 100)
+        return
+      }
+      if (readySent.current) return
+      readySent.current = true
+      performance.mark('pp:ready')
+      game.loadingEnd()
+      onReady?.()
+      // Not needed for the first frame: the audio engine, and every item's model and icon
+      // (built ahead so nothing is made mid-fight).
+      const idle = (fn, ms) => ('requestIdleCallback' in window ? requestIdleCallback(fn, { timeout: ms }) : setTimeout(fn, 200))
+      idle(prepareAudio, 1500)
+      idle(warmItemModels, 3000)
+    }
+    check()
+    return () => clearTimeout(id)
   }, [firstFrame, game, onReady])
 
   const handleCreated = useCallback(({ gl, scene }) => {
@@ -136,7 +176,7 @@ export function GameScene({ onReady }) {
         gl={createRenderer}
         shadows={false}
         flat
-        camera={{ position: [36, 26, 50], fov, near: 0.08, far: settings.viewDistance }}
+        camera={{ position: [64, 30, 104], fov, near: 0.08, far: settings.viewDistance }}
         onCreated={handleCreated}
       >
         <fog attach="fog" args={['#d4f3ff', settings.fogNear, settings.viewDistance * 0.95]} />
@@ -145,8 +185,7 @@ export function GameScene({ onReady }) {
 
         <Player />
         {/* Light for the avatars only: the blocks' shading is baked into the terrain. */}
-        <hemisphereLight args={['#eaf4ff', '#9a8466', 2.2]} />
-        <directionalLight position={[42, 60, -82]} intensity={1.9} color="#fff1d6" />
+        <DayLights />
         <Sky />
         <Terrain />
         <Liquid />
@@ -158,13 +197,12 @@ export function GameScene({ onReady }) {
             {zone === 'lobby' ? <LobbyProps /> : <Effects />}
           </Suspense>
         )}
-        {firstFrame && (
-          <ErrorBoundary>
-            <Suspense fallback={null}>
-              <Avatars />
-            </Suspense>
-          </ErrorBoundary>
-        )}
+        {/* Avatars load from the start (behind the loading screen): yours is ready when you see the game. */}
+        <ErrorBoundary>
+          <Suspense fallback={null}>
+            <Avatars />
+          </Suspense>
+        </ErrorBoundary>
         <ViewModel />
         <FirstFrameSignal onFirstFrame={handleFirstFrame} />
         <PerfProbe />

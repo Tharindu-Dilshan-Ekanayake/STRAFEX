@@ -9,7 +9,7 @@ import { pushFx, runtime } from '../game/runtime'
  */
 
 const MAX_SNAPS = 20
-export const INTERP_MS = 110
+export const INTERP_MS = 90
 
 function makeRemote(eid) {
   return {
@@ -26,6 +26,8 @@ function makeRemote(eid) {
     pitch: 0,
     anim: 0,
     held: 'fist',
+    off: 'fist',
+    burning: false,
     walkPhase: 0,
     speed: 0,
     swingAt: 0,
@@ -36,12 +38,13 @@ function makeRemote(eid) {
   }
 }
 
-/** A `snap` message: `{ z: zone, e: [eid, x, y, z, yaw, pitch, anim, held, ...] }` (x100). */
+/** A `snap` message: `{ z: zone, e: [eid, x, y, z, yaw, pitch, anim, held, offhand, ...] }` (x100). */
+const STRIDE = 9
 export function applySnapshot(zone, e) {
   const viewing = runtime.zone === 'lobby' ? 'lobby' : 'match'
   if (zone !== viewing) return
   const now = performance.now()
-  for (let i = 0; i + 7 < e.length; i += 8) {
+  for (let i = 0; i + STRIDE - 1 < e.length; i += STRIDE) {
     const eid = e[i]
     if (eid === runtime.eid) continue
     let r = runtime.remotes.get(eid)
@@ -56,8 +59,11 @@ export function applySnapshot(zone, e) {
       r.z = e[i + 3] / 100
     }
     r.seenAt = now
-    r.anim = e[i + 6]
+    // The low bits are the animation; 16 means on fire.
+    r.anim = e[i + 6] & 15
+    r.burning = (e[i + 6] & 16) !== 0
     r.held = ITEM_IDS[e[i + 7]] || 'fist'
+    r.off = ITEM_IDS[e[i + 8]] || 'fist'
     // Snapshot entries are recycled: no garbage at 20 Hz x 8 players.
     const snap = r.snaps.length >= MAX_SNAPS ? r.snaps.shift() : freeSnaps.pop() || {}
     snap.t = now
@@ -73,8 +79,9 @@ export function applySnapshot(zone, e) {
     if (r.seenAt === now) continue
     releaseSnaps(r)
     runtime.remotes.delete(eid)
-    // Gone from the round (eliminated, fell, left): a puff of smoke where they stood.
-    if (viewing === 'match' && now - r.firstSeen > 500) pushFx({ type: 'poof', x: r.x, y: r.y + 0.9, z: r.z })
+    // Gone from the round (eliminated, fell, left): a puff of smoke where they stood -
+    // unless they just walked out of range (Spirelands only sends who's near you).
+    if (viewing === 'match' && now - r.firstSeen > 500 && (r.camDist ?? 0) < 90) pushFx({ type: 'poof', x: r.x, y: r.y + 0.9, z: r.z })
   }
 }
 
@@ -98,9 +105,11 @@ function dress(r, entry) {
   r.team = entry.team ?? -1
   r.level = entry.level || 0
   r.vip = Boolean(entry.vip)
+  r.armor = entry.armor || 'none'
+  r.streak = entry.streak || 0
 }
 
-/** Names, capes and skins from the roster. */
+/** Names, skins, armour and streaks from the roster. */
 export function applyRoster(list) {
   rosterCache.clear()
   for (const entry of list) {

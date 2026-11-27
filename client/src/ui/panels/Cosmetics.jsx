@@ -4,7 +4,7 @@ import { CAPES, casePool, CASES, RARITIES, RARITY_ORDER, SWORD_SKINS } from '@sh
 import { mulberry32 } from '@shared/rng'
 
 import { sfx } from '../../audio/sfx'
-import { capePreview } from '../../game/art/capes'
+import { killFxPreview } from '../../game/art/killfx'
 import { itemIcon } from '../../game/art/items'
 import { actions } from '../../net/actions'
 import { useGame } from '../../store/game'
@@ -25,7 +25,7 @@ function CosmeticTile({ kind, id, rarity, chance, owned, equipped, onClick }) {
       style={{ padding: u(8), gap: u(4), borderColor: equipped ? '#fff' : rarityColor(rarity), opacity: owned === false ? 0.55 : 1 }}
       onClick={onClick}
     >
-      <img src={isCape ? capePreview(id) : itemIcon('diamond_sword', id)} alt="" className="pixelated" style={{ height: u(64), width: isCape ? u(40) : u(64) }} draggable={false} />
+      <img src={isCape ? killFxPreview(id) : itemIcon('diamond_sword', id)} alt="" className="pixelated" style={{ height: u(64), width: u(64) }} draggable={false} />
       <span className="txt-o text-center" style={{ fontSize: u(14), lineHeight: 1.1 }}>
         {def?.gemOnly ? `★ ${def.name}` : def?.name}
       </span>
@@ -157,12 +157,12 @@ export function CaseOpening({ result }) {
         {result.gift ? 'WELCOME GIFT · ' : ''}
         {c.name.toUpperCase()}
       </div>
-      <div className="mc-panel relative overflow-hidden" style={{ width: `min(92vw, ${u(760)})`, padding: `${u(12)} 0` }}>
+      <div className="mc-gui relative overflow-hidden" style={{ width: `min(92vw, ${u(760)})`, padding: `${u(12)} 0` }}>
         <div className="absolute left-1/2 top-0 z-10 h-full -translate-x-1/2" style={{ width: u(4), background: '#ffd23b', boxShadow: '0 0 8px #ffd23b' }} />
         <div ref={stripRef} className="flex" style={{ gap: 8, willChange: 'transform' }}>
           {strip.map((e, i) => (
             <div key={i} className="slot flex shrink-0 flex-col items-center justify-center" style={{ width: u(TILE), height: u(150), borderColor: rarityColor(e.rarity), gap: u(4) }}>
-              <img src={kind === 'cape' ? capePreview(e.id) : itemIcon('diamond_sword', e.id)} alt="" className="pixelated" style={{ height: u(80), width: kind === 'cape' ? u(50) : u(80) }} draggable={false} />
+              <img src={kind === 'cape' ? killFxPreview(e.id) : itemIcon('diamond_sword', e.id)} alt="" className="pixelated" style={{ height: u(80), width: u(80) }} draggable={false} />
               <span className="txt-o text-center" style={{ fontSize: u(13), lineHeight: 1.1 }}>
                 {(kind === 'cape' ? CAPES[e.id] : SWORD_SKINS[e.id])?.name}
               </span>
@@ -215,7 +215,7 @@ export function BackpackPanel() {
     <div className="flex flex-col" style={{ gap: u(12) }}>
       <div className="flex" style={{ gap: u(10) }}>
         <Button color={tab === 'cape' ? '#ffb52e' : '#4b5563'} style={{ padding: `${u(8)} ${u(16)}`, fontSize: u(20) }} onClick={() => setTab('cape')}>
-          CAPES {profile.capes.length}/{Object.keys(CAPES).length}
+          KILL FX {profile.capes.length}/{Object.keys(CAPES).length}
         </Button>
         <Button color={tab === 'sword' ? '#3fa2ff' : '#4b5563'} style={{ padding: `${u(8)} ${u(16)}`, fontSize: u(20) }} onClick={() => setTab('sword')}>
           SWORDS {profile.swords.length}/{Object.keys(SWORD_SKINS).length}

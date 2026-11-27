@@ -1,32 +1,32 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { BOT_LEVELS, CASES, MODES, MODE_IDS } from '@shared/balance'
-import { MAP_IDS, MAPS } from '@shared/maps'
+import { CASES, LOBBY_SWORD, MODES } from '@shared/balance'
 import { dailyStatus } from '@shared/logic'
 
+import { itemIcon } from '../../game/art/items'
 import { exitPointerLock } from '../../game/input'
 import { runtime } from '../../game/runtime'
 import { actions } from '../../net/actions'
 import { switchLobby } from '../../net/connection'
 import { useGame } from '../../store/game'
-import { formatCash, u, useCountUp, useNow } from '../format'
+import { formatCash, formatClock, u, useCountUp, useNow } from '../format'
 import { Button, Fancy } from '../kit'
 import { t } from '../i18n'
-import GameIcon from '../GameIcon'
+import PixelIcon from '../PixelIcon'
 
-/** The lobby HUD: the vote, server fill, the menu, wallet and case prompt, the welcome gift. */
+/** The lobby HUD: play buttons and the queue, server fill, the menu, wallet and station prompts, the welcome gift. */
 
-/** How many people are in this server (online only: offline there's nothing to say). */
+/** How many people are on this server (online only: offline there's nothing to say). */
 export function PlayerCount() {
   const net = useGame((s) => s.net)
   if (net.mode !== 'online') return null
-  const text = net.isPrivate ? t('PRIVATE ROOM {code} · {n}/{max} PLAYERS', { code: net.code || '', n: net.players, max: net.maxPlayers }) : t('{n}/{max} PLAYERS', { n: net.players, max: net.maxPlayers })
+  const text = net.isPrivate ? t('PRIVATE SERVER {code} · {n}/{max} ONLINE', { code: net.code || '', n: net.players, max: net.maxPlayers }) : t('{n}/{max} ONLINE', { n: net.players, max: net.maxPlayers })
   return (
     <div className="flex items-center" style={{ gap: u(10) }}>
       <span className="txt-o" style={{ fontSize: u(14), color: '#bfe8ff' }}>
         {text}
       </span>
-      {net.mode === 'online' && net.isPrivate && (
+      {net.isPrivate && (
         <Button className="pointer-events-auto" color="#3a6fd8" style={{ padding: `${u(2)} ${u(10)}`, fontSize: u(13) }} onClick={() => switchLobby({ mode: 'public' })}>
           PUBLIC SERVER
         </Button>
@@ -35,161 +35,110 @@ export function PlayerCount() {
   )
 }
 
-/**
- * The lobby vote, decided by everyone in the room, in two steps: first the mode (and
- * whether to play with bots, and how hard), then - with the chosen mode shown - the map.
- * Each step ends when its time is up or as soon as everyone has voted; once the map is
- * picked the round starts.
- */
-export function VoteCards({ phase }) {
-  const now = useNow(250)
-  const label = (n) => t(n === 1 ? '{n} VOTE' : '{n} VOTES', { n: n || 0 })
-  const modeStep = phase.voteStage !== 'map'
-  const stageLeft = Math.max(0, (phase.stageEndsAt || 0) - now)
-  const step = (n, text) => (
-    <div className="flex items-center" style={{ gap: u(10) }}>
-      <span className="chip" style={{ fontSize: u(13), color: '#ffd23b' }}>
-        {t('STEP {n}/2', { n })}
-      </span>
-      <Fancy size={22} from="#ffffff" to="#c9b8ff">
-        {t(text)}
-      </Fancy>
-      {phase.phase === 'intermission' && (
-        <span className="chip" style={{ fontSize: u(15), color: '#ffd23b' }}>
-          {Math.ceil(stageLeft / 1000)}s
-        </span>
-      )}
-    </div>
-  )
-
-  if (modeStep) {
-    return (
-      <div className="vote-panel pointer-events-auto mc-panel flex flex-col items-center" style={{ gap: u(10), marginTop: u(4), padding: `${u(10)} ${u(12)} ${u(12)}` }}>
-        {step(1, 'PICK THE MODE')}
-        <div className="vote-row vote-modes" style={{ gap: u(8) }}>
-          {MODE_IDS.map((id, i) => {
-            const m = MODES[id]
-            const mine = phase.myVote === id
-            return (
-              <button
-                key={id}
-                type="button"
-                className={`mc-btn vote-card flex flex-col items-center text-center ${mine ? 'picked' : ''}`}
-                style={{ '--c': m.color, '--i': i, width: u(150), padding: `${u(8)} ${u(8)}` }}
-                onClick={() => actions.vote(id)}
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}modes/${id}.webp`}
-                  alt=""
-                  draggable={false}
-                  style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', borderRadius: u(9), marginBottom: u(4), boxShadow: '0 2px 0 rgba(0,0,0,0.25)' }}
-                />
-                <span className="txt-o" style={{ fontSize: u(19), fontWeight: 700 }}>
-                  {t(m.name)}
-                </span>
-                <span className="mode-blurb txt-o" style={{ fontSize: u(12), lineHeight: 1.2, minHeight: u(56), opacity: 0.95, fontWeight: 500 }}>
-                  {t(m.blurb)}
-                </span>
-                <span key={phase.votes?.[id] || 0} className="vote-count bump">
-                  {label(phase.votes?.[id])}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-        <div className="flex items-center" style={{ gap: u(8) }}>
-          <span className="txt-o" style={{ fontSize: u(16), color: '#d9ccff', fontWeight: 700 }}>
-            {t('BOTS')}
-          </span>
-          {[
-            ['normal', 'WITH BOTS', '#3fae4a'],
-            ['off', 'NO BOTS', '#d8443a'],
-          ].map(([id, label, color]) => {
-            const mine = phase.myBotVote === id
-            return (
-              <button
-                key={id}
-                type="button"
-                className={`mc-btn txt-o ${mine ? 'picked' : ''}`}
-                style={{ '--c': mine ? color : '#4b5468', padding: `${u(4)} ${u(14)}`, fontSize: u(15) }}
-                onClick={() => actions.voteBots(id)}
-              >
-                {t(label)} · {phase.botVotes?.[id] || 0}
-              </button>
-            )
-          })}
-        </div>
-        <span className="txt-o" style={{ fontSize: u(13), color: '#bdb3e0', fontWeight: 500 }}>
-          {t('Most votes wins. No bots unless you vote for them (they play at Medium). Then everyone picks the map')}
-        </span>
-      </div>
-    )
-  }
-
-  const chosen = MODES[phase.chosenMode]
+/** Two of the game's own diamond swords, crossed. */
+function CrossedSwords({ size }) {
+  const src = itemIcon(LOBBY_SWORD)
   return (
-    <div className="vote-panel pointer-events-auto mc-panel flex flex-col items-center" style={{ gap: u(10), marginTop: u(4), padding: `${u(10)} ${u(12)} ${u(12)}` }}>
-      {chosen && (
-        <div className="flex items-center" style={{ gap: u(10) }}>
-          <span className="txt-o" style={{ fontSize: u(13), color: '#bdb3e0' }}>
-            {t('MODE')}
+    <span className="play-icon relative inline-block" style={{ width: size, height: size }} aria-hidden="true">
+      <img src={src} alt="" className="pixelated absolute inset-0" style={{ width: '100%', height: '100%' }} draggable={false} />
+      <img src={src} alt="" className="pixelated absolute inset-0" style={{ width: '100%', height: '100%', transform: 'scaleX(-1)' }} draggable={false} />
+    </span>
+  )
+}
+
+/** The title and the two ways to play: blocky buttons, pixel icons, Minecraft-style lettering. */
+export function PlayButtons() {
+  const open = useGame((s) => s.openPanel)
+  const phase = useGame((s) => s.phase)
+  if (phase.queue) return null
+  return (
+    <div className="play-buttons pointer-events-auto flex flex-col items-center" style={{ gap: u(8) }}>
+      <div className="flex" style={{ gap: u(12) }}>
+        <Button
+          color="#e0a21b"
+          className="play-btn bob"
+          onClick={() => {
+            exitPointerLock()
+            open('modes')
+          }}
+        >
+          <CrossedSwords size={u(40)} />
+          <span className="flex flex-col items-start">
+            <span className="play-title">{t('PLAY DUELS')}</span>
+            <span className="play-sub">{t('1V1 · REAL PLAYERS')}</span>
           </span>
-          <span className="chip" style={{ fontSize: u(18), background: chosen.color, color: '#fff', fontWeight: 700 }}>
-            {t(chosen.name)}
+        </Button>
+        <Button color="#3a6fd8" className="play-btn bob" onClick={() => actions.ffa()}>
+          <PixelIcon name="spire" size={u(40)} />
+          <span className="flex flex-col items-start">
+            <span className="play-title">{t('SPIRELANDS FFA')}</span>
+            <span className="play-sub">{phase.ffa ? t('{n} FIGHTING', { n: phase.ffa }) : t('FREE FOR ALL')}</span>
           </span>
-          {phase.chosenBots && (
-            <span className="chip" style={{ fontSize: u(14), color: BOT_LEVELS[phase.chosenBots]?.color }}>
-              {phase.chosenBots === 'off' ? t('NO BOTS') : t('{name} bots', { name: t(BOT_LEVELS[phase.chosenBots]?.name) })}
-            </span>
-          )}
-        </div>
-      )}
-      {step(2, 'PICK THE MAP')}
-      <div className="vote-row vote-maps" style={{ gap: u(10) }}>
-        {(phase.mapOptions || MAP_IDS.slice(0, 6)).map((id, i) => {
-          const mine = phase.myMapVote === id
-          return (
-            <button
-              key={id}
-              type="button"
-              className={`mc-btn vote-card flex flex-col items-center text-center ${mine ? 'picked' : ''}`}
-              style={{ '--c': mine ? '#e0a21b' : '#4b5468', '--i': i, width: u(176), padding: u(6), gap: u(4) }}
-              onClick={() => actions.voteMap(id)}
-            >
-              <img src={`${import.meta.env.BASE_URL}maps/${id}.webp`} alt={MAPS[id].name} draggable={false} style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', borderRadius: u(10) }} />
-              <span className="txt-o" style={{ fontSize: u(17), fontWeight: 700, lineHeight: 1.1 }}>
-                {t(MAPS[id].name)}
-              </span>
-              <span key={phase.mapVotes?.[id] || 0} className="vote-count bump">
-                {label(phase.mapVotes?.[id])}
-              </span>
-            </button>
-          )
-        })}
+        </Button>
       </div>
     </div>
   )
 }
 
-function MenuButton({ label, short, icon, color, badge, onClick }) {
+/** In a queue: how long you've waited, and the way out. */
+export function QueueBar() {
+  const phase = useGame((s) => s.phase)
+  const now = useNow(500)
+  if (!phase.queue) return null
+  const waited = Math.max(0, now - (phase.queuedSince || now))
+  const m = MODES[phase.queue]
+  const inFfa = phase.kind === 'ffa'
+  // Waiting a while in the lobby: point at Spirelands (the search goes on in there).
+  const nudge = !inFfa && waited > 15000
   return (
-    <Button color={color} className="menu-btn relative flex flex-col items-center justify-center" onClick={onClick}>
-      <GameIcon name={icon} size={34} />
-      <span className="menu-label txt-o">{label}</span>
-      <span className="menu-label-short txt-o">{short || label}</span>
+    <div className="queue-bar mc-hud pointer-events-auto flex items-center" style={{ gap: u(14), padding: `${u(8)} ${u(14)}` }}>
+      <span className="queue-spinner" />
+      <div className="flex flex-col" style={{ gap: u(4) }}>
+        <span className="mc-text" style={{ fontSize: u(18) }}>
+          {t('SEARCHING FOR OPPONENT')} <span style={{ color: '#ffff55' }}>{formatClock(waited)}</span>
+        </span>
+        <span className="txt-o" style={{ fontSize: u(13), color: '#e0e0e0' }}>
+          {t('CASUAL')} · <span style={{ color: m?.color }}>{t(m?.name || '')}</span> {t('1v1')} · {t('{n} searching', { n: Math.max(1, Object.values(phase.searching || {}).reduce((a, b) => a + b, 0)) })}
+        </span>
+      </div>
+      {!inFfa && (
+        <button
+          type="button"
+          className={`mc-stone ${nudge ? 'nudge' : ''}`}
+          style={{ padding: `${u(6)} ${u(12)}`, fontSize: u(12), lineHeight: 1.15 }}
+          title={t('Fight in Spirelands while you wait: you are pulled into the duel the moment an opponent is found')}
+          onClick={() => actions.ffa()}
+        >
+          {t('PLAY SPIRELANDS')}
+          <br />
+          <span style={{ fontSize: u(9), color: '#d6f0ff' }}>{t('WHILE YOU WAIT')}</span>
+        </button>
+      )}
+      <button type="button" className="mc-stone" style={{ padding: `${u(6)} ${u(14)}`, fontSize: u(14) }} onClick={() => actions.unqueue()}>
+        {t('LEAVE QUEUE')}
+      </button>
+    </div>
+  )
+}
+
+function MenuButton({ label, short, icon, badge, onClick }) {
+  return (
+    <button type="button" className="mc-stone menu-btn relative flex flex-col items-center justify-center" onClick={onClick}>
+      <PixelIcon name={icon} size={u(36)} className="" />
+      <span className="menu-label">{label}</span>
+      <span className="menu-label-short">{short || label}</span>
       {badge && (
         <span className="absolute flex items-center justify-center rounded-full bg-red-600" style={{ right: u(-10), top: u(-10), width: u(24), height: u(24), fontSize: u(15), border: `${u(3)} solid #0d0a18` }}>
           !
         </span>
       )}
-    </Button>
+    </button>
   )
 }
 
 export function LobbyMenu() {
   const open = useGame((s) => s.openPanel)
   const profile = useGame((s) => s.profile)
-  const afk = useGame((s) => s.phase.afk)
   const [openedAt] = useState(() => Date.now())
   const dailyReady = dailyStatus(profile, openedAt).ready
   const go = (panel, data) => {
@@ -198,13 +147,12 @@ export function LobbyMenu() {
   }
   return (
     <div className="lobby-menu pointer-events-auto absolute" style={{ left: u(14), gap: u(12) }}>
-      <MenuButton label={t('SHOP')} icon="bag" color="#e0a21b" onClick={() => go('shop')} />
-      <MenuButton label={t('CASES')} icon="chest" color="#c25cff" onClick={() => go('cases', { caseId: 'cape' })} />
-      <MenuButton label={t('BACKPACK')} short={t('BAG')} icon="backpack" color="#b0633a" onClick={() => go('backpack')} />
-      <MenuButton label={t('DAILY')} icon="gift" color="#3fa2ff" badge={dailyReady} onClick={() => go('daily')} />
-      <MenuButton label={t('QUESTS')} icon="scroll" color="#e0702b" onClick={() => go('quests')} />
-      <MenuButton label={t('TOP')} icon="trophy" color="#2bb3a3" onClick={() => go('leaderboards')} />
-      <MenuButton label={afk ? t('AFK: ON') : t('AFK: OFF')} short={t('AFK')} icon="moon" color={afk ? '#d8443a' : '#4b5563'} onClick={() => actions.afk(!afk)} />
+      <MenuButton label={t('SHOP')} icon="shop" onClick={() => go('shop')} />
+      <MenuButton label={t('CASES')} icon="chest" onClick={() => go('cases', { caseId: 'cape' })} />
+      <MenuButton label={t('BACKPACK')} short={t('BAG')} icon="backpack" onClick={() => go('backpack')} />
+      <MenuButton label={t('DAILY')} icon="gift" badge={dailyReady} onClick={() => go('daily')} />
+      <MenuButton label={t('QUESTS')} icon="scroll" onClick={() => go('quests')} />
+      <MenuButton label={t('TOP')} icon="trophy" onClick={() => go('leaderboards')} />
     </div>
   )
 }
@@ -215,49 +163,64 @@ export function Wallet() {
   const shown = useCountUp(cash)
   return (
     <div className="wallet slide-in-up absolute flex flex-col" style={{ left: u(14), bottom: u(14), gap: u(6) }}>
-      <div className="txt-o" style={{ fontSize: u(28), fontWeight: 700, color: '#ffd23b' }}>
+      <div className="mc-text" style={{ fontSize: u(26), color: '#ffff55' }}>
         👑 {wins}
       </div>
-      <div key={cash} className="txt-o bump" style={{ fontSize: u(30), fontWeight: 700, color: '#7cff6b', transformOrigin: 'left center' }}>
+      <div key={cash} className="mc-text bump" style={{ fontSize: u(28), color: '#55ff55', transformOrigin: 'left center' }}>
         {formatCash(shown)}
       </div>
     </div>
   )
 }
 
+/** Standing at a station: the Duels arch, the Spirelands portal, a case stall. */
 export function StationPrompt() {
   const prompt = useGame((s) => s.prompt)
   const open = useGame((s) => s.openPanel)
-  if (!prompt?.startsWith('case:')) return null
-  const caseId = prompt.slice(5)
-  const c = CASES[caseId]
+  const queued = useGame((s) => Boolean(s.phase.queue))
+  if (!prompt) return null
+  const key = runtime.input.touch ? '' : '[E] '
+  let label
+  let color
+  let onClick
+  if (prompt === 'duels') {
+    if (queued) return null
+    label = `${key}${t('CHOOSE YOUR MODE')}`
+    color = '#e0a21b'
+    onClick = () => {
+      exitPointerLock()
+      open('modes')
+    }
+  } else if (prompt === 'ffa') {
+    label = `${key}${t('ENTER SPIRELANDS')}`
+    color = '#3a6fd8'
+    onClick = () => actions.ffa()
+  } else if (prompt.startsWith('case:')) {
+    const caseId = prompt.slice(5)
+    const c = CASES[caseId]
+    label = `${key}${c.name.toUpperCase()} · $${c.price}`
+    color = c.color
+    onClick = () => {
+      exitPointerLock()
+      open('cases', { caseId })
+    }
+  } else return null
   return (
     <div className="station-prompt absolute left-1/2 -translate-x-1/2" style={{ bottom: u(120) }}>
-      <Button
-        className="pointer-events-auto bob"
-        color={c.color}
-        style={{ padding: `${u(10)} ${u(26)}`, fontSize: u(24), fontWeight: 700 }}
-        onClick={() => {
-          exitPointerLock()
-          open('cases', { caseId })
-        }}
-      >
-        {runtime.input.touch ? 'OPEN' : '[E]'} {c.name.toUpperCase()} · ${c.price}
+      <Button className="pointer-events-auto bob" color={color} style={{ padding: `${u(10)} ${u(26)}`, fontSize: u(24), fontWeight: 700 }} onClick={onClick}>
+        {label}
       </Button>
     </div>
   )
 }
 
-/** First visit: a free Cape Case, opened right away. */
+/** First visit: a free Kill FX Case, opened right away (not while queued). */
 export function WelcomeGift() {
   const loaded = useGame((s) => s.profileLoaded)
   const given = useGame((s) => s.profile.welcomeGift)
   const phase = useGame((s) => s.phase)
-  const now = useNow(1000)
   const asked = useRef(false)
-  // Only in the countdown before the votes (or while waiting for players): never over
-  // the vote, never with a round about to start.
-  const calm = phase.phase === 'waiting' || (phase.phase === 'intermission' && phase.voteStage === 'wait' && phase.endsAt - now > 12_000)
+  const calm = phase.kind === 'lobby' && !phase.queue
   useEffect(() => {
     if (!loaded || given || asked.current || !calm) return undefined
     const id = setTimeout(() => {
@@ -267,4 +230,18 @@ export function WelcomeGift() {
     return () => clearTimeout(id)
   }, [loaded, given, calm])
   return null
+}
+
+/** The lobby parkour's clock, while you're on the course. */
+export function ParkourTimer() {
+  const now = useNow(100)
+  const started = runtime.parkour.startedAt
+  if (!started) return null
+  return (
+    <div className="absolute left-1/2 -translate-x-1/2" style={{ top: '18%' }}>
+      <Fancy size={34} from="#e8ffd8" to="#3fdc4a">
+        {`PARKOUR ${((now - started) / 1000).toFixed(1)}s`}
+      </Fancy>
+    </div>
+  )
 }

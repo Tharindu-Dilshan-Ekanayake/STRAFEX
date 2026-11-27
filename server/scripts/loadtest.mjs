@@ -3,10 +3,12 @@
  * N fake players who vote, wander and report positions like real clients, and reports the
  * server's CPU and memory and how evenly snapshots arrive.
  *
- *   node scripts/loadtest.mjs [players=32] [seconds=60]
+ *   node scripts/loadtest.mjs [players=32] [seconds=60] [mix|ffa]
+ *
+ * `ffa`: everyone in Spirelands at once (the heaviest case: one world, everyone visible).
  *
  * Fake players stand still-ish (small steps around where they were put), so the movement
- * checks should never correct them: any `tp` beyond the round's own teleports is counted.
+ * checks should never correct them: any `tp` beyond the game's own teleports is counted.
  */
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -18,8 +20,9 @@ import { Client } from '@colyseus/sdk'
 
 const PLAYERS = Number(process.argv[2] || 32)
 const SECONDS = Number(process.argv[3] || 60)
+const ALL_FFA = process.argv[4] === 'ffa'
 const PORT = 2599
-const dir = mkdtempSync(join(tmpdir(), 'lucky-load-'))
+const dir = mkdtempSync(join(tmpdir(), 'strafex-load-'))
 
 const server = spawn(process.execPath, ['src/server.js'], {
   env: { ...process.env, PORT: String(PORT), DB_PATH: join(dir, 'load.db'), NODE_ENV: 'development', MONGODB_URI: '' },
@@ -79,9 +82,14 @@ async function connect(i) {
       else stats.tps += 1
     } else if (type === 'phase') {
       stats.phases.set(room.roomId, payload.phase)
-      if (payload.phase === 'intermission') {
-        room.send(payload.voteStage === 'map' ? 'voteMap' : 'vote', payload.voteStage === 'map' ? { map: 'meadow' } : { mode: 'classic' })
-      }
+      // Every third player lives in Spirelands; the rest queue for sword duels (paired
+      // with each other, or a bot), vote, and play again when a duel ends.
+      if (payload.kind === 'lobby' && !payload.queue) {
+        if (ALL_FFA || i % 3 === 0) room.send('ffa')
+        else room.send('queue', { mode: 'sword' })
+      } else if (payload.kind === 'ffa' && payload.needKit) room.send('kit', { mode: 'sword' })
+      else if (payload.kind === 'duel' && payload.phase === 'vote' && !payload.myMapVote) room.send('voteMap', { map: 'meadow' })
+      else if (payload.kind === 'duel' && payload.phase === 'ended') room.send('requeue')
     }
   })
   bots.push(me)

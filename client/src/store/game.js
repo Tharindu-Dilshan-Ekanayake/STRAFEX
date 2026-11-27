@@ -7,7 +7,7 @@ import { createProfile, createSession } from '@shared/logic'
  * never from a frame loop. Components select narrowly (`useGame((s) => s.me.hp)`).
  */
 
-const SETTINGS_KEY = 'lsb.settings'
+const SETTINGS_KEY = 'strafex.settings'
 const DEFAULT_SETTINGS = { sensitivity: 1, fov: 75, invertY: false, camera: 'first', showFps: false }
 
 function readSettings() {
@@ -20,27 +20,25 @@ function readSettings() {
 
 let toastId = 0
 
-/** The mode or map vote is on screen (in the lobby, waiting for players or voting). */
-export function voteOnScreen(phase, zone) {
-  if (zone !== 'lobby' || phase.afk) return false
-  return phase.phase === 'waiting' || (phase.phase === 'intermission' && phase.voteStage !== 'wait')
-}
-
 export const useGame = create((set, get) => ({
   profile: createProfile('local', 'Player'),
   session: createSession(Date.now()),
   profileLoaded: false,
   playable: false,
 
-  net: { mode: 'connecting', lobbyId: null, code: null, isPrivate: false, players: 1, maxPlayers: 8, message: null },
+  net: { mode: 'connecting', lobbyId: null, code: null, isPrivate: false, players: 1, maxPlayers: 30, message: null, ping: 0 },
   leaderboards: null,
 
-  /** The round: phase, when it ends (performance.now() time), mode, votes. */
-  phase: { phase: 'waiting', endsAt: 0, mode: null, map: null, alive: 0, fighters: 0, votes: {}, myVote: null, afk: false, waitingFor: 0 },
+  /**
+   * Where you are in the flow, from the host: `kind` 'lobby' (with your queue and who's
+   * searching), 'duel' (vote / countdown / fight / between / ended, round, score) or
+   * 'ffa'; `endsAt` is when the current step ends (performance.now() time).
+   */
+  phase: { kind: 'lobby', phase: 'lobby', endsAt: 0, queue: null, queuedMs: 0, searching: {}, playing: {}, ffa: 0, online: 1 },
   /** 'lobby' | 'match' | 'spec' */
   zone: 'lobby',
-  /** Our health, hotbar and effects in a round. */
-  me: { hp: 20, maxHp: 20, inv: [], sel: 0, effects: {}, alive: false, kills: 0 },
+  /** Our health, armour, hotbar, effects and combat stats in a fight. */
+  me: { hp: 20, maxHp: 20, absorb: 0, inv: [], sel: 0, effects: {}, alive: false, kills: 0, armor: { tier: 'none', dura: [0, 0, 0, 0] }, kit: null, stats: { hits: 0, taken: 0, dealt: 0, dmgTaken: 0, combo: 0, best: 0 }, shieldOff: 0 },
   /** eid -> { eid, name, bot, cape, sword, zone, alive, kills } */
   roster: {},
   /** Kill feed, newest first: { id, k, v, how }. */
@@ -54,18 +52,20 @@ export const useGame = create((set, get) => ({
   touchUI: false,
   /** `{ ups: [{ level, cash, case? }], id }` right after levelling up. */
   levelUp: null,
-  /** The last lucky block result: { text, items, rare, bad, id }. */
-  loot: null,
-  /** End of your round: { kind: 'dead' | 'win' | 'lost', by, placement, reward }. */
+  /** Big text in the middle of the screen: `{ text, sub, color, id }` (ROUND 2, FIGHT, round won). */
+  banner: null,
+  /** Knocked out: `{ kind: 'dead', by, how, mode: 'duel' | 'ffa' }`. */
   result: null,
-  /** Round cash just earned, shown on the result card. */
+  /** A duel is over: `{ win, winner, score, forfeit, mode }`. */
+  duelOver: null,
+  /** Your stats from the last duel (hits, combo...), shown on its result card. */
+  duelStats: null,
+  /** Cash and XP just earned, shown on the result card. */
   roundReward: null,
   /** A case being opened: { caseId, id, kind, duplicate, refund, gift }. */
   caseOpen: null,
-  /** The lobby station in reach: 'case:cape' | 'case:sword' | null. */
+  /** The lobby station in reach: 'duels' | 'ffa' | 'case:cape' | 'case:sword' | null. */
   prompt: null,
-  /** First-round tutorial step: 0 break a lucky block, 1 select blocks, 2 bridge to the middle, 3 done. */
-  tutorial: 0,
   pointerLocked: false,
   panel: null,
   panelData: null,
@@ -85,9 +85,6 @@ export const useGame = create((set, get) => ({
     if (get().prompt !== prompt) set({ prompt })
   },
   setPointerLocked: (pointerLocked) => set({ pointerLocked }),
-  setTutorial: (tutorial) => {
-    if (tutorial > get().tutorial) set({ tutorial })
-  },
   setSpectating: (spectating) => {
     if (get().spectating !== spectating) set({ spectating })
   },
@@ -114,8 +111,10 @@ export const useGame = create((set, get) => ({
     setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 3200)
   },
   setKillBanner: (killBanner) => set({ killBanner: killBanner ? { ...killBanner, id: ++toastId } : null }),
-  setLoot: (loot) => set({ loot: loot ? { ...loot, id: ++toastId } : null }),
+  setBanner: (banner) => set({ banner: banner ? { ...banner, id: ++toastId } : null }),
   setResult: (result) => set({ result }),
+  setDuelOver: (duelOver) => set({ duelOver }),
+  setDuelStats: (duelStats) => set({ duelStats }),
   setRoundReward: (roundReward) => set({ roundReward }),
   setQuickChat: (quickChat) => set({ quickChat }),
   setTouchUI: (touchUI) => {

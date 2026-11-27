@@ -50,7 +50,7 @@ export const formatCash = (n) => {
 }
 
 const heartCache = {}
-/** Pixel heart image: 'full' | 'half' | 'empty'. */
+/** Pixel heart image: 'full' | 'half' | 'empty' | 'gold' | 'goldHalf' (absorption). */
 export function heartUrl(kind) {
   if (heartCache[kind]) return heartCache[kind]
   const rows = ['.xx.xx.', 'xxxxxxx', 'xxxxxxx', '.xxxxx.', '..xxx..', '...x...']
@@ -69,8 +69,12 @@ export function heartUrl(kind) {
   rows.forEach((row, y) =>
     [...row].forEach((ch, x) => {
       if (ch !== 'x') return
-      const filled = kind === 'full' || (kind === 'half' && x < 3)
-      ctx.fillStyle = filled ? (y === 1 && x === 1 ? '#ffb3c0' : y >= 3 ? '#b3122c' : '#ff2f4f') : '#3b2a33'
+      const gold = kind === 'gold' || kind === 'goldHalf'
+      const filled = kind === 'full' || kind === 'gold' || ((kind === 'half' || kind === 'goldHalf') && x < 3)
+      const light = gold ? '#fff3b0' : '#ffb3c0'
+      const dark = gold ? '#c98a0c' : '#b3122c'
+      const mid = gold ? '#ffd23b' : '#ff2f4f'
+      ctx.fillStyle = filled ? (y === 1 && x === 1 ? light : y >= 3 ? dark : mid) : '#3b2a33'
       ctx.fillRect(x + 1, y + 1, 1, 1)
     }),
   )

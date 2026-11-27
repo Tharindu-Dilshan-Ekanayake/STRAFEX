@@ -4,7 +4,7 @@ import { AD_REWARDS, CAPES, DAILY_REWARDS, GEM_GROUPS, GEM_PRODUCTS, LEVEL_CASE_
 import { dailyStatus } from '@shared/logic'
 
 import { buyGems, isRewardedAvailable, useGemsBalance, watchRewardedAd } from '../../bloxity/services'
-import { capePreview } from '../../game/art/capes'
+import { killFxPreview } from '../../game/art/killfx'
 import { itemIcon } from '../../game/art/items'
 import { actions } from '../../net/actions'
 import { useGame } from '../../store/game'
@@ -19,7 +19,7 @@ function productState(p, profile, now) {
   const g = p.grant
   // A pack (cash and more) is never "owned"; a single exclusive is, once you have it.
   const single = !g.cash
-  if (g.cape) return { owned: single && profile.capes.includes(g.cape), picture: capePreview(g.cape), tall: true, rarity: CAPES[g.cape]?.gemOnly ? CAPES[g.cape].rarity : null }
+  if (g.cape) return { owned: single && profile.capes.includes(g.cape), picture: killFxPreview(g.cape), rarity: CAPES[g.cape]?.gemOnly ? CAPES[g.cape].rarity : null }
   if (g.sword) return { owned: single && profile.swords.includes(g.sword), picture: itemIcon('diamond_sword', g.sword), rarity: SWORD_SKINS[g.sword]?.gemOnly ? SWORD_SKINS[g.sword].rarity : null }
   if (g.pass) return { owned: Boolean(profile.passes[g.pass]) }
   if (g.xpBoostMs) {
@@ -191,7 +191,7 @@ export function QuestsPanel() {
             <div className="xp-fill" style={{ width: `${Math.min(100, (xp / need) * 100)}%`, height: '100%', background: 'linear-gradient(90deg, #7cf0ff, #5f8bff)' }} />
           </div>
           <span className="txt-o" style={{ fontSize: u(13), color: '#e6c7ff' }}>
-            Free case at level {nextCase} · XP from playing, kills, lucky blocks, wins and quests
+            Free case at level {nextCase} · XP from duels, wins, kills, hits and quests
           </span>
         </div>
       </div>
@@ -233,8 +233,8 @@ export function QuestsPanel() {
 export function LeaderboardsPanel() {
   const boards = useGame((s) => s.leaderboards)
   const profile = useGame((s) => s.profile)
-  const [tab, setTab] = useState('wins')
-  const tabs = { wins: 'WINS', kills: 'KILLS', games: 'ROUNDS', playtime: 'MINUTES' }
+  const [tab, setTab] = useState('kills')
+  const tabs = { kills: 'KILLS', playtime: 'MINUTES', hits: 'HITS', wins: 'WINS', games: 'ROUNDS' }
   const rows = boards?.[tab] || []
   return (
     <div className="flex flex-col" style={{ gap: u(10) }}>

@@ -5,5 +5,5 @@ import { ITEMS } from './balance.js'
  * index and an item index per entity. Kept apart from host.js so a client can read
  * snapshots without bundling the whole host.
  */
-export const ANIMS = ['idle', 'walk', 'sprint', 'sneak', 'air']
+export const ANIMS = ['idle', 'walk', 'sprint', 'sneak', 'air', 'block']
 export const ITEM_IDS = Object.keys(ITEMS)

@@ -6,9 +6,11 @@ import {
   Color,
   Float32BufferAttribute,
   Group,
+  InstancedMesh,
   LinearFilter,
   Mesh,
   MeshBasicMaterial,
+  Object3D,
   PlaneGeometry,
   SRGBColorSpace,
   Sprite,
@@ -17,14 +19,17 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 import { CASES } from '@shared/balance'
+import { LOBBY_TOP } from '@shared/maps'
 
 import { useGame } from '../store/game'
+import { runtime } from './runtime'
 import { lobbyLayout } from './world'
 
 /**
- * The lobby's set dressing: a toy-chest case floating over each case pedestal with its
- * name and price, the game's title over the spawn, and the leaderboard on the back
- * wall. Mounted only while you're in the lobby.
+ * The lobby's set dressing: a toy-chest case floating over each case stall, signs over
+ * the Duels arch, the portal, the training grounds, the parkour and the sky pads, the
+ * game's title over the sword monument, the leaderboard on the market wall, and the
+ * training dummies (they wobble when you hit them). Mounted only in the lobby.
  */
 
 export const FONT = "'Silkscreen', system-ui, sans-serif"
@@ -50,8 +55,21 @@ function caseGeometry(color) {
     box(0.22, 0.26, 0.08, 0, 0.3, -0.52, '#ffffff'),
     box(0.16, 0.16, 0.06, -0.38, 0.05, -0.49, '#ff5fd2'),
     box(0.16, 0.16, 0.06, 0.38, 0.05, -0.49, '#ff5fd2'),
-    box(0.28, 0.18, 0.14, -0.55, -0.45, -0.3, '#ffffff'),
-    box(0.28, 0.18, 0.14, 0.55, -0.45, -0.3, '#ffffff'),
+  ]
+  const geo = mergeGeometries(parts)
+  for (const p of parts) p.dispose()
+  return geo
+}
+
+/** A straw training dummy on a post: post, body, belt, head with a face, arms (one model). */
+function dummyGeometry() {
+  const parts = [
+    box(0.16, 0.7, 0.16, 0, 0.35, 0, '#6d4a2a'),
+    box(0.56, 0.72, 0.32, 0, 1.05, 0, '#d8b44a'),
+    box(0.58, 0.12, 0.34, 0, 0.82, 0, '#c8352e'),
+    box(0.44, 0.44, 0.44, 0, 1.64, 0, '#e8d8a8'),
+    box(1.2, 0.16, 0.16, 0, 1.2, 0, '#b8932f'),
+    box(0.3, 0.06, 0.02, 0, 1.68, -0.23, '#3a2a1a'),
   ]
   const geo = mergeGeometries(parts)
   for (const p of parts) p.dispose()
@@ -70,8 +88,14 @@ function textCanvas(w, h, draw) {
   return tex
 }
 
-function outlined(ctx, text, x, y, size, fill, stroke = '#1b1430') {
+function outlined(ctx, text, x, y, size, fill, stroke = '#1b1430', maxWidth = Infinity) {
   ctx.font = `700 ${size}px ${FONT}`
+  // Too wide for the canvas: shrink to fit.
+  const w = ctx.measureText(text).width
+  if (w > maxWidth) {
+    size = Math.floor((size * maxWidth) / w)
+    ctx.font = `700 ${size}px ${FONT}`
+  }
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.lineWidth = Math.max(4, size / 6)
@@ -85,16 +109,23 @@ function outlined(ctx, text, x, y, size, fill, stroke = '#1b1430') {
 function stationLabel(caseId) {
   const c = CASES[caseId]
   return textCanvas(256, 128, (ctx, w) => {
-    outlined(ctx, c.name.toUpperCase(), w / 2, 34, 34, c.color)
+    outlined(ctx, c.name.toUpperCase(), w / 2, 34, 30, c.color)
     outlined(ctx, `$${c.price}`, w / 2, 76, 30, '#7cff6b')
     outlined(ctx, 'PRESS E', w / 2, 110, 20, '#ffffff')
   })
 }
 
+function signLabel(sign) {
+  return textCanvas(512, 128, (ctx, w) => {
+    outlined(ctx, sign.text, w / 2, 46, 52, sign.color, '#1b1430', w - 24)
+    outlined(ctx, sign.sub || '', w / 2, 100, 22, '#ffffff', '#1b1430', w - 24)
+  })
+}
+
 function titleLabel() {
   return textCanvas(512, 160, (ctx, w) => {
-    outlined(ctx, 'LUCKY', w / 2, 52, 64, '#ffd23b')
-    outlined(ctx, 'SKY BRAWL', w / 2, 116, 56, '#7fdcff')
+    outlined(ctx, 'STRAFEX', w / 2, 66, 84, '#ffb21a')
+    outlined(ctx, 'COMPETITIVE BLOCK PVP', w / 2, 126, 26, '#cfe6ff')
   })
 }
 
@@ -127,6 +158,8 @@ function drawBoard(ctx, w, h, boards) {
   }
 }
 
+const dummyObj = new Object3D()
+
 export default function LobbyProps() {
   const boards = useGame((s) => s.leaderboards)
   const layout = lobbyLayout()
@@ -136,25 +169,31 @@ export default function LobbyProps() {
     const caseMat = new MeshBasicMaterial({ vertexColors: true })
     const cases = []
     const textures = []
+    const sprite = (tex, w, h, x, y, z) => {
+      textures.push(tex)
+      const s = new Sprite(new SpriteMaterial({ map: tex, transparent: true, depthWrite: false }))
+      s.scale.set(w, h, 1)
+      s.position.set(x, y, z)
+      group.add(s)
+      return s
+    }
     for (const st of layout.stations) {
+      if (!st.id.startsWith('case:')) continue
       const caseId = st.id.slice(5)
       const mesh = new Mesh(caseGeometry(CASES[caseId].color), caseMat)
       mesh.position.set(st.x, st.y + 1.2, st.z)
       group.add(mesh)
       cases.push({ mesh, baseY: st.y + 1.2 })
-      const tex = stationLabel(caseId)
-      textures.push(tex)
-      const label = new Sprite(new SpriteMaterial({ map: tex, transparent: true, depthWrite: false }))
-      label.scale.set(3.2, 1.6, 1)
-      label.position.set(st.x, st.y + 5.8, st.z)
-      group.add(label)
+      sprite(stationLabel(caseId), 3.2, 1.6, st.x, st.y + 5.8, st.z)
     }
-    const titleTex = titleLabel()
-    textures.push(titleTex)
-    const title = new Sprite(new SpriteMaterial({ map: titleTex, transparent: true, depthWrite: false }))
-    title.scale.set(9, 2.8, 1)
-    title.position.set(layout.center.x + 0.5, 29.5, layout.center.z + 0.5)
-    group.add(title)
+    for (const sign of layout.signs) sprite(signLabel(sign), 8, 2, sign.x, sign.y, sign.z)
+    const title = sprite(titleLabel(), 12, 3.75, layout.center.x + 0.5, LOBBY_TOP + 27, layout.center.z + 0.5)
+
+    // The training dummies: one instanced model, wobbling when hit.
+    const dummyGeo = dummyGeometry()
+    const dummies = new InstancedMesh(dummyGeo, caseMat, Math.max(1, layout.dummies.length))
+    dummies.count = layout.dummies.length
+    group.add(dummies)
 
     const boardCanvas = document.createElement('canvas')
     boardCanvas.width = 512
@@ -164,10 +203,12 @@ export default function LobbyProps() {
     boardTex.minFilter = LinearFilter
     boardTex.generateMipmaps = false
     textures.push(boardTex)
-    const board = new Mesh(new PlaneGeometry(layout.board.w, layout.board.h), new MeshBasicMaterial({ map: boardTex }))
-    board.position.set(layout.board.x, layout.board.y, layout.board.z)
+    const b = layout.board
+    const board = new Mesh(new PlaneGeometry(b.w, b.h), new MeshBasicMaterial({ map: boardTex }))
+    board.position.set(b.x, b.y, b.z)
+    board.rotation.y = b.ry || 0
     group.add(board)
-    return { group, cases, textures, boardCanvas, boardTex, board, caseMat, title, titleY: title.position.y }
+    return { group, cases, textures, boardCanvas, boardTex, board, caseMat, title, titleY: title.position.y, dummies, dummyGeo }
   }, [layout])
 
   useEffect(() => {
@@ -185,6 +226,7 @@ export default function LobbyProps() {
       for (const c of scene.cases) c.mesh.geometry.dispose()
       for (const t of scene.textures) t.dispose()
       scene.caseMat.dispose()
+      scene.dummyGeo.dispose()
       scene.board.geometry.dispose()
       scene.board.material.dispose()
       scene.group.traverse((o) => o.isSprite && o.material.dispose())
@@ -193,7 +235,8 @@ export default function LobbyProps() {
   )
 
   useFrame(() => {
-    const t = performance.now() / 1000
+    const now = performance.now()
+    const t = now / 1000
     scene.cases.forEach((c, i) => {
       c.mesh.rotation.y = t * 0.8 + i
       c.mesh.position.y = c.baseY + Math.sin(t * 2 + i) * 0.15
@@ -201,7 +244,19 @@ export default function LobbyProps() {
     // The title floats and gently breathes.
     scene.title.position.y = scene.titleY + Math.sin(t * 1.3) * 0.35
     const breathe = 1 + Math.sin(t * 2.6) * 0.025
-    scene.title.scale.set(9 * breathe, 2.8 * breathe, 1)
+    scene.title.scale.set(12 * breathe, 3.75 * breathe, 1)
+    // Dummies rock back after a hit and settle.
+    const list = layout.dummies
+    for (let i = 0; i < list.length; i += 1) {
+      const d = list[i]
+      const since = (now - (runtime.dummyHits[i] || -1e9)) / 1000
+      const wobble = since < 1.2 ? Math.sin(since * 18) * 0.35 * (1 - since / 1.2) : 0
+      dummyObj.position.set(d.x, d.y - 1, d.z)
+      dummyObj.rotation.set(wobble, 0, wobble * 0.4)
+      dummyObj.updateMatrix()
+      scene.dummies.setMatrixAt(i, dummyObj.matrix)
+    }
+    scene.dummies.instanceMatrix.needsUpdate = true
   })
 
   return <primitive object={scene.group} />

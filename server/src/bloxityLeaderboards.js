@@ -20,15 +20,16 @@ import { activePlayers } from './registry.js'
 export const BLOXITY_LEADERBOARDS = [
   { id: 'wins', label: 'Wins', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
   { id: 'kills', label: 'Kills', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
-  { id: 'games', label: 'Rounds Played', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
+  { id: 'games', label: 'Duels Played', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
   { id: 'playtime', label: 'Minutes Played', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
+  { id: 'hits', label: 'Hits Landed', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
 ]
 
 const REPORT_MS = 20_000
 /** Boxity takes at most this many scores per call. */
 export const MAX_SCORES_PER_REPORT = 200
 
-/** A profile's score on each board, as whole numbers: `{ wins, kills, games, playtime }`. */
+/** A profile's score on each board, as whole numbers: `{ wins, kills, games, playtime, hits }`. */
 export function leaderboardScores(profile) {
   const stats = profile.stats || {}
   const whole = (n) => (Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0)
@@ -37,6 +38,7 @@ export function leaderboardScores(profile) {
     kills: whole(profile.kills),
     games: whole(profile.games),
     playtime: whole((stats.playtime || 0) / 60),
+    hits: whole(stats.hits),
   }
 }
 

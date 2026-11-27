@@ -1,104 +1,142 @@
 import {
-  ATTACK_COOLDOWN_MS,
-  BOT_LEVEL_IDS,
+  AIR,
+  ARMOR,
+  ARMOR_RANK,
+  armorReduce,
   BOT_LEVELS,
   BOT_NAMES,
+  BOT_SKINS,
+  BOUNTY_STREAK,
   breakSeconds,
+  CAMPFIRE,
+  COMBAT,
+  CRYSTAL,
+  DUEL,
   EFFECTS,
-  QUICK_CHAT,
-  QUICK_CHAT_MS,
+  FFA,
+  FIRE,
+  GUST,
   HOTBAR,
+  HP,
+  INV_SIZE,
   ITEMS,
-  LAVA,
-  lavaHeight,
+  kitArmor,
+  kitHotbar,
   LOBBY_SWORD,
-  MAP_CHOICES,
-  LUCKY_BONUS_BLOCKS,
-  MELEE_REACH,
+  LOOT,
+  mineSpeed,
+  MELEE_KINDS,
   MODE_IDS,
   MODES,
+  OFFHAND,
   PROJECTILES,
-  TEAMS,
+  QUICK_CHAT,
+  QUICK_CHAT_MS,
   REACH,
-  ROUND,
-  rollLucky,
-  TNT,
+  RECIPES,
+  TABLE_REACH,
+  SPLASH,
+  WATER,
 } from './balance.js'
 import { createBrain, thinkBot } from './bots.js'
-import { generateLobby, generateMatch, ISLAND_TOP, MAP_IDS, MATCH_SIZE } from './maps.js'
+import { ARENA_BUILD_HEIGHT, ARENA_FLOOR, DUEL_MAP_IDS, FFA_SEED, generateArena, generateLobby, generateSpirelands } from './maps.js'
 import { checkMove, createMoveState, resetMoveState } from './movecheck.js'
-import { cellOverlapsBody, createBody, PLAYER } from './physics.js'
-import { B, BLOCKS, blockKey, isLucky, isSolidBlock, raycastVoxels, rayBox } from './voxel.js'
+import { cellOverlapsBody, createBody, inWater, PLAYER } from './physics.js'
+import { ANIMS, ITEM_IDS } from './protocol.js'
+import { B, BLOCKS, blockKey, flowBlock, isCrystal, isSolidBlock, isWater, raycastVoxels, rayBox, unpackKey, waterLevel } from './voxel.js'
 
 /**
- * The game's authority for one room: the lobby, the vote, and each round from the cages
- * to the winner. Runs inside the Colyseus room on the server, and inside the offline
- * stand-in in the browser, so the game plays the same either way.
+ * The game's authority for one server: the lobby, the duel queues, every duel in
+ * progress (each in its own small arena world) and Spirelands, the free-for-all world.
+ * Runs inside the Colyseus room on the server and inside the offline stand-in in the
+ * browser, so the game plays the same either way.
  *
  * Players report where they are (movement is theirs, checked for speed); everything
- * else - breaking and placing blocks, what lucky blocks give, hits, health, the lava,
- * bots - is decided here and sent out as small messages:
+ * else - hits, armour, health, blocks, projectiles, rounds, bots - is decided here and
+ * sent out as small messages:
  *
- * - `snap`   ~20 Hz: everyone's position in your zone
- * - `roster` who is here (names, capes, alive, kills)
- * - `phase`  round phase, time left, votes, lava
- * - `match`  the round's map and seed (+ edits so far), when you enter it
+ * - `snap`   ~20 Hz: everyone's position in your world (and what's in both hands)
+ * - `roster` who is here (names, capes, where they are)
+ * - `phase`  where you are in the flow: the lobby and your queue, a duel's vote, round
+ *            and score, or Spirelands
+ * - `match`  the world you're entering (kind, map, seed + edits so far)
  * - `edits`  block changes `[x, y, z, id, ...]`
- * - `me`     your health, hotbar and effects
- * - one-off events: `hurt`, `kb`, `tp`, `loot`, `pop`, `feed`, `proj`, `projEnd`,
- *   `boom`, `tnt`, `bolt`, `swing`, `dead`, `win`, `toast`
+ * - `me`     your health, armour, hotbar, effects and combat stats
+ * - one-off events: `hurt`, `kb`, `tp`, `feed`, `proj`, `projEnd`, `boom`, `gust`,
+ *   `splash`, `charm`, `blocked`, `shieldOff`, `smash`, `swing`, `act`, `dead`,
+ *   `roundEnd`, `duelEnd`, `toast`, `qc`, `pickup`, `crafted`, `douse`, `ignite`
  */
-
-import { ANIMS, ITEM_IDS } from './protocol.js'
 
 export { ANIMS, ITEM_IDS }
 const SIM_HZ = 20
 /** Right after knockback or a teleport: a loose cap only (blocks/s, plus slack). */
-const MAX_SPEED = 16
+const MAX_SPEED = 22
 const MOVE_SLACK = 3
 /** A rejected move: positions are ignored until the client takes the correction. */
 const CORRECTION_MS = 1500
 /** Allowance on reach checks for network lag. */
-const REACH_SLACK = 1.6
-const NATURAL_REGEN_MS = 2500
-const REGEN_DELAY_MS = 6000
+const REACH_SLACK = 1.4
+/** Gaps between uses (ms): eating and drinking take time; the client holds to eat. */
+const USE_GAP = { food: 1000, potion: 800, bow: 300, throw: 220, splash: 260 }
+/** Bot skill by duel mode in Spirelands: kits bots can play well. */
+const BOT_KITS = MODE_IDS.filter((id) => id !== 'crystal')
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
+/** Roster state updates (kills, deaths) at most this often. */
+const ROSTER_GAP_MS = 200
+/** Spirelands snapshots carry players this close to you (blocks, across the ground). */
+const SNAP_RANGE = 140
+/** The entries of a snapshot list (9 numbers each, positions x100) within SNAP_RANGE of (x, z). */
+function nearOnly(list, x, z) {
+  const out = []
+  const r = SNAP_RANGE * 100
+  const cx = x * 100
+  const cz = z * 100
+  for (let i = 0; i + 8 < list.length; i += 9) {
+    const dx = list[i + 1] - cx
+    const dz = list[i + 3] - cz
+    if (dx * dx + dz * dz <= r * r) for (let k = 0; k < 9; k += 1) out.push(list[i + k])
+  }
+  return out
+}
+
+/** A cell and its six neighbours; the four beside it. */
+const NEIGHBOURS = [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
+const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]
 const num = (v, fallback = 0) => (Number.isFinite(Number(v)) ? Number(v) : fallback)
+const round1 = (v) => Math.round(v * 10) / 10
 
 export class GameHost {
   /**
    * @param {object} o
    * @param {(cid: string, type: string, payload?: object) => void} o.send
-   * @param {(cid: string, result: object) => void} [o.onReward] a player's round is over
+   * @param {(cid: string, result: object) => void} [o.onReward] a duel (or a Spirelands life) is over
    * @param {() => number} [o.now]
    * @param {() => number} [o.random]
    */
-  constructor({ send, onReward = () => {}, onAnalytics = () => {}, now = () => Date.now(), random = Math.random, log = (msg) => console.warn(msg) }) {
+  /**
+   * Duels are always against a real player. `duelBots` (tests only) lets a lone player
+   * in a duel queue get a bot instead.
+   */
+  constructor({ send, onReward = () => {}, onParkour = () => {}, onAnalytics = () => {}, now = () => Date.now(), random = Math.random, log = (msg) => console.warn(msg), duelBots = false }) {
+    this.duelBots = duelBots
     this.sendTo = send
-    /** Anonymous gameplay events (no names or ids): 'round', 'player_round', 'leave', 'tutorial'. */
+    /** A player reached the top of the lobby parkour: `(cid, ms)`. */
+    this.onParkour = onParkour
     this.onAnalytics = onAnalytics
     this.log = log
     this.onReward = onReward
     this.now = now
     this.random = random
     this.lobby = generateLobby()
-    /** cid -> { cid, eid, name, afk, vote } */
+    /** cid -> { cid, eid, name, queue, queuedAt, duel, joinedAt, duels } */
     this.members = new Map()
     /** eid -> entity (players and bots) */
     this.ents = new Map()
+    /** key -> arena (duels and Spirelands) */
+    this.arenas = new Map()
     this.nextEid = 1
-    this.phase = 'waiting'
-    this.phaseEnds = 0
-    /** The lobby vote's step: 'mode' first (and bots), then 'map' - and then the round. */
-    this.voteStage = 'mode'
-    this.stageEnds = 0
-    this.lockedMode = null
-    this.lockedBots = null
-    this.match = null
-    this.lastMap = null
-    /** The maps on offer this round (MAP_CHOICES of them, never the last one played). */
-    this.mapOptions = MAP_IDS.slice(0, MAP_CHOICES)
+    this.nextArena = 1
     this.rosterDirty = true
     this.phaseDirty = true
     this.phaseSentAt = 0
@@ -109,15 +147,14 @@ export class GameHost {
 
   join(cid, name, look = {}) {
     const eid = this.nextEid++
-    const member = { cid, eid, name, afk: false, vote: null, mapVote: null, botVote: null, joinedAt: this.now(), rounds: 0, tutorial: 0 }
+    const member = { cid, eid, name, queue: null, queuedAt: 0, duel: null, joinedAt: this.now(), duels: 0, lastMode: null }
     this.members.set(cid, member)
     const ent = this.makeEnt(eid, name, { cid, cape: look.cape, sword: look.sword, level: look.level || 1, vip: Boolean(look.vip) })
-    this.toLobby(ent, false)
     this.ents.set(eid, ent)
+    this.toLobby(ent, false)
     this.sendTo(cid, 'hello', { eid })
     this.rosterDirty = true
     this.phaseDirty = true
-    if (this.phase === 'waiting') this.maybeStartIntermission()
     return eid
   }
 
@@ -125,19 +162,8 @@ export class GameHost {
     const member = this.members.get(cid)
     if (!member) return
     const ent = this.ents.get(member.eid)
-    const zone = ent?.zone || 'lobby'
-    const phase = this.phase
-    if (ent?.zone === 'match' && ent.alive && this.match) {
-      this.kill(ent, null, 'left')
-    }
-    // Where people quit, and after how long (the round they walked out of counts).
-    this.track('leave', {
-      zone,
-      phase,
-      sessionMs: this.now() - member.joinedAt,
-      rounds: member.rounds,
-      tutorial: member.tutorial,
-    })
+    if (ent) this.leaveArena(ent, 'left')
+    this.track('leave', { zone: ent?.zone || 'lobby', sessionMs: this.now() - member.joinedAt, rounds: member.duels })
     this.ents.delete(member.eid)
     this.members.delete(cid)
     this.rosterDirty = true
@@ -166,9 +192,8 @@ export class GameHost {
       cid: null,
       bot: false,
       name,
-      cape: 'none',
-      sword: 'classic',
       zone: 'lobby',
+      arena: null,
       x: 0,
       y: 0,
       z: 0,
@@ -176,24 +201,37 @@ export class GameHost {
       pitch: 0,
       anim: 0,
       alive: false,
-      hp: ROUND.hp,
-      maxHp: ROUND.hp,
-      inv: new Array(HOTBAR).fill(null),
+      hp: HP,
+      maxHp: HP,
+      absorb: 0,
+      inv: new Array(INV_SIZE).fill(null),
       sel: 0,
+      armor: { tier: 'none', dura: [0, 0, 0, 0] },
+      kit: null,
       effects: {},
       kills: 0,
+      lifeKills: 0,
+      team: -1,
       lastHurtAt: 0,
+      hurtUntil: 0,
       lastAttackAt: 0,
       lastUseAt: 0,
-      lastLavaAt: 0,
-      lastBurnAt: 0,
       lastRegenAt: 0,
       lastHitBy: null,
+      blocking: false,
+      blockAt: 0,
+      shieldOffUntil: 0,
+      lungeAt: 0,
+      lungeUntil: 0,
+      peakY: 0,
+      noFallUntil: 0,
+      needKit: false,
       dig: null,
       posAt: 0,
       tpGrace: 0,
       mv: createMoveState(),
       awaitTp: null,
+      stats: freshStats(),
       dirty: true,
       ...extra,
       cape: extra.cape || 'none',
@@ -220,84 +258,84 @@ export class GameHost {
         const y = Math.floor(num(p.y))
         const z = Math.floor(num(p.z))
         ent.dig = { key: blockKey(x, y, z), at: this.now() }
-        // Others see which block you're mining (chips fly off it while you swing).
         if (ent.zone === 'match') this.toWatchers(ent, 'act', { eid: ent.eid, kind: 'dig', x, y, z })
         return
       }
       case 'break':
         return this.onBreak(ent, Math.floor(num(p.x)), Math.floor(num(p.y)), Math.floor(num(p.z)))
       case 'place':
-        return this.onPlace(ent, Math.floor(num(p.x)), Math.floor(num(p.y)), Math.floor(num(p.z)))
+        return this.onPlace(ent, Math.floor(num(p.x)), Math.floor(num(p.y)), Math.floor(num(p.z)), p.hand)
       case 'attack':
         return this.onAttack(ent, Math.floor(num(p.eid)))
       case 'use':
         return this.onUse(ent, p)
+      case 'block':
+        return this.setBlocking(ent, Boolean(p.on))
+      case 'swap':
+        return this.swapSlots(ent, Math.floor(num(p.a, -1)), Math.floor(num(p.b, -1)))
+      case 'swapHands':
+        return this.swapSlots(ent, ent.sel, OFFHAND)
+      case 'craft':
+        return this.craft(ent, String(p.id))
       case 'swing':
-        return this.toZone(ent.zone, 'swing', { eid: ent.eid }, ent.cid)
+        if (ent.zone === 'lobby') this.toZone('lobby', null, 'swing', { eid: ent.eid }, ent.cid)
+        else if (ent.arena) this.toWatchers(ent, 'swing', { eid: ent.eid })
+        return
       case 'look':
         return this.onLook(ent, p)
-      case 'joinRound':
-        return this.joinRound(ent)
-      case 'voteBots':
-        if (BOT_LEVELS[p.level] && (this.phase === 'waiting' || (this.phase === 'intermission' && this.voteStage !== 'map'))) {
-          member.botVote = p.level
+      case 'queue':
+        return this.joinQueue(member, ent, String(p.mode))
+      case 'unqueue':
+        if (member.queue) {
+          member.queue = null
           this.phaseDirty = true
         }
         return
-      case 'tut': {
-        // How far through the tutorial people get (each step counted once per visit).
-        const step = Math.floor(num(p.step, 0))
-        if (step > member.tutorial && step <= 5) {
-          member.tutorial = step
-          this.track('tutorial', { step })
+      case 'voteMap': {
+        const arena = this.arenas.get(member.duel)
+        if (arena && arena.phase === 'vote' && arena.mapOptions.includes(p.map)) {
+          arena.votes.set(ent.eid, p.map)
+          this.phaseDirty = true
         }
         return
       }
-      case 'qc': {
-        // Quick chat: one of the fixed lines, rate limited, to everyone who can see you.
-        const ent = this.entOf(cid)
-        const i = Math.floor(num(p.i, -1))
-        const now = this.now()
-        if (!ent || i < 0 || i >= QUICK_CHAT.length || now - (ent.qcAt || 0) < QUICK_CHAT_MS) return
-        ent.qcAt = now
-        const msg = { eid: ent.eid, name: ent.name, i, team: ent.team ?? -1 }
-        if (ent.zone === 'lobby') this.toZone('lobby', 'qc', msg)
-        else this.toMatchViewers('qc', msg)
-        return
-      }
-      case 'voteMap':
-        if (this.mapOptions.includes(p.map) && this.phase === 'intermission' && this.voteStage === 'map') {
-          member.mapVote = p.map
-          this.phaseDirty = true
-        }
-        return
-      case 'vote':
-        if (MODES[p.mode] && (this.phase === 'waiting' || (this.phase === 'intermission' && this.voteStage !== 'map'))) {
-          member.vote = p.mode
-          this.phaseDirty = true
-        }
-        return
-      case 'afk':
-        member.afk = Boolean(p.on)
-        this.phaseDirty = true
-        this.rosterDirty = true
-        if (!member.afk) this.maybeStartIntermission()
-        return
-      case 'spectate':
-        if (ent.zone === 'lobby' && this.match && (this.phase === 'cages' || this.phase === 'fight')) {
-          ent.zone = 'spec'
-          ent.alive = false
-          this.sendMatch(ent)
-          this.teleport(ent, this.match.middle.x, this.match.middle.y + 14, this.match.middle.z)
-          this.rosterDirty = true
-        }
-        return
+      case 'ffa':
+        return this.enterFfa(member, ent)
+      case 'kit':
+        return this.pickKit(ent, String(p.mode))
       case 'lobby':
-        if (ent.zone === 'spec') {
+        if (ent.zone !== 'lobby' || member.duel) {
+          this.leaveArena(ent, 'left')
           this.toLobby(ent)
           this.rosterDirty = true
+          this.phaseDirty = true
         }
         return
+      case 'requeue': {
+        const mode = member.lastMode
+        const arena = this.arenas.get(member.duel)
+        if (arena && arena.kind === 'duel' && arena.phase !== 'ended') return
+        if (ent.zone !== 'lobby' || member.duel) {
+          this.leaveArena(ent, 'left')
+          this.toLobby(ent)
+        }
+        if (mode) this.joinQueue(member, ent, mode)
+        return
+      }
+      case 'parkour':
+        return this.onParkourDone(member, ent, Math.floor(num(p.ms)))
+      case 'loot':
+        return this.openChest(ent, Math.floor(num(p.x)), Math.floor(num(p.y)), Math.floor(num(p.z)))
+      case 'qc': {
+        const i = Math.floor(num(p.i, -1))
+        const now = this.now()
+        if (i < 0 || i >= QUICK_CHAT.length || now - (ent.qcAt || 0) < QUICK_CHAT_MS) return
+        ent.qcAt = now
+        const msg = { eid: ent.eid, name: ent.name, i, team: ent.team ?? -1 }
+        if (ent.zone === 'lobby') this.toZone('lobby', null, 'qc', msg)
+        else this.toArena(this.arenas.get(ent.arena), 'qc', msg)
+        return
+      }
       default:
     }
   }
@@ -319,7 +357,6 @@ export class GameHost {
     }
     const look = JSON.stringify({
       equipped: clean(msg.equipped, (v) => (typeof v === 'string' && v.length <= 40) || (Number.isFinite(v) && Math.abs(v) < 1e12)),
-      // Boxity's ranges: legOffsetX -0.7 to 5, armLength from 0.05, the rest 0.3 to 2.6.
       proportions: clean(msg.proportions, (v) => Number.isFinite(v) && v >= -1 && v <= 6),
     })
     if (look.length <= 2048 && look !== ent.look) {
@@ -336,9 +373,9 @@ export class GameHost {
     const now = this.now()
     ent.yaw = num(p.yaw)
     ent.pitch = clamp(num(p.pitch), -1.6, 1.6)
-    ent.anim = clamp(Math.floor(num(p.a)), 0, ANIMS.length - 1)
-    if (ent.zone === 'match' && ent.alive) {
-      // Waiting for the client to take a correction: its stale reports don't count.
+    const anim = clamp(Math.floor(num(p.a)), 0, ANIMS.length - 1)
+    const arena = this.arenas.get(ent.arena)
+    if (ent.zone === 'match' && ent.alive && arena?.world) {
       if (ent.awaitTp) {
         const t = ent.awaitTp
         if (Math.hypot(x - t.x, y - t.y, z - t.z) > 2 && now < t.until) return
@@ -349,642 +386,944 @@ export class GameHost {
       const dt = Math.max(0.02, (now - ent.posAt) / 1000)
       let bad = null
       if (now <= ent.tpGrace) {
-        // Knockback or a teleport in flight: only a loose cap, and start over from here.
         if (Math.hypot(x - ent.x, z - ent.z) > MAX_SPEED * dt + MOVE_SLACK) bad = 'speed'
         else resetMoveState(ent.mv, y, now)
       } else {
         const fx = ent.effects
-        bad = checkMove(this.match.world, ent.mv, ent, { x, y, z }, dt, now, {
+        bad = checkMove(arena.world, ent.mv, ent, { x, y, z }, dt, now, {
           speedMul: fx.speed > now ? EFFECTS.speed.speedMul : 1,
-          jumpMul: fx.jump > now ? EFFECTS.jump.jumpMul : 1,
+          jumpMul: fx.leap > now ? EFFECTS.leap.jumpMul : fx.jump > now ? EFFECTS.jump.jumpMul : 1,
         })
       }
       if (bad) {
         this.correct(ent, bad)
         return
       }
+      ent.falling = y < ent.y - 0.01
+      this.trackFall(ent, arena, anim === 4, y, now)
     }
+    ent.anim = anim
     ent.x = x
     ent.y = y
     ent.z = z
     ent.posAt = now
   }
 
-  // --- Phases ---------------------------------------------------------------------------
-
-  eligibleMembers() {
-    return [...this.members.values()].filter((m) => !m.afk && this.ents.get(m.eid)?.zone === 'lobby')
-  }
-
-  maybeStartIntermission(ms = ROUND.intermissionMs) {
-    if (this.phase !== 'waiting') return
-    if (!this.eligibleMembers().length) return
-    // The countdown first (shorter if `ms` asks for less), then the two votes.
-    const wait = Math.max(0, ms - ROUND.modeVoteMs - ROUND.mapVoteMs)
-    this.setPhase('intermission', wait)
-    this.voteStage = wait > 0 ? 'wait' : 'mode'
-    this.stageEnds = wait > 0 ? this.phaseEnds : this.now() + ROUND.modeVoteMs
-    this.phaseEnds = this.stageEnds
-    this.lockedMode = null
-    this.lockedBots = null
-  }
-
-  /** The countdown is over: the mode (and bots) vote opens. */
-  openModeVote() {
-    this.voteStage = 'mode'
-    this.stageEnds = this.now() + ROUND.modeVoteMs
-    this.phaseEnds = this.stageEnds
-    this.phaseDirty = true
-  }
-
-  /** Step one is over: the mode (and bots) are decided, the map vote opens. */
-  lockMode() {
-    this.lockedMode = this.pickMode()
-    this.lockedBots = this.pickBotLevel()
-    this.voteStage = 'map'
-    this.rollMapOptions()
-    for (const m of this.members.values()) m.mapVote = null
-    this.stageEnds = this.now() + ROUND.mapVoteMs
-    this.phaseEnds = this.stageEnds
-    this.phaseDirty = true
-  }
-
-  setPhase(phase, ms) {
-    this.phase = phase
-    this.phaseEnds = this.now() + ms
-    this.phaseDirty = true
-  }
-
-  tick(dt) {
-    const now = this.now()
-    if (this.phase === 'intermission') {
-      const voters = this.eligibleMembers()
-      if (!voters.length) this.setPhase('waiting', 0)
-      else {
-        // Each step ends when its time is up - or as soon as everyone has voted. Once the
-        // map is decided, the round starts.
-        if (this.voteStage === 'wait' && now >= this.stageEnds) this.openModeVote()
-        else if (this.voteStage === 'mode' && (now >= this.stageEnds || voters.every((m) => m.vote))) this.lockMode()
-        else if (this.voteStage === 'map' && (now >= this.stageEnds || voters.every((m) => m.mapVote))) this.startMatch()
-      }
-    } else if (this.phase === 'cages') {
-      if (now >= this.phaseEnds) this.openCages()
-    } else if (this.phase === 'fight') {
-      this.tickFight(dt, now)
-      if (this.phase === 'fight' && now >= this.phaseEnds) this.timeUp()
-    } else if (this.phase === 'ended') {
-      if (now >= this.phaseEnds) this.backToLobby()
-    } else if (this.phase === 'waiting') {
-      this.maybeStartIntermission()
-    }
-
-    this.flush(dt, now)
-  }
-
-  /** The most-voted map on offer (ties broken at random); with no votes, any of them. */
-  pickMap() {
-    const counts = this.mapVoteCounts()
-    const best = Math.max(0, ...Object.values(counts))
-    const pool = best ? this.mapOptions.filter((id) => counts[id] === best) : this.mapOptions
-    return pool[Math.floor(this.random() * pool.length)]
-  }
-
-  /** MAP_CHOICES different maps for the vote, leaving out the one just played. */
-  rollMapOptions() {
-    const pool = MAP_IDS.filter((id) => id !== this.lastMap)
-    for (let i = pool.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(this.random() * (i + 1))
-      ;[pool[i], pool[j]] = [pool[j], pool[i]]
-    }
-    this.mapOptions = pool.slice(0, MAP_CHOICES)
-  }
-
-  mapVoteCounts() {
-    const counts = Object.fromEntries(this.mapOptions.map((id) => [id, 0]))
-    for (const m of this.members.values()) if (m.mapVote && counts[m.mapVote] !== undefined) counts[m.mapVote] += 1
-    return counts
-  }
-
-  pickMode() {
-    const counts = {}
-    for (const m of this.members.values()) if (m.vote) counts[m.vote] = (counts[m.vote] || 0) + 1
-    const best = Math.max(0, ...Object.values(counts))
-    if (!best) return 'classic'
-    const top = MODE_IDS.filter((id) => counts[id] === best)
-    return top[Math.floor(this.random() * top.length)]
-  }
-
-  voteCounts() {
-    const counts = Object.fromEntries(MODE_IDS.map((id) => [id, 0]))
-    for (const m of this.members.values()) if (m.vote && counts[m.vote] !== undefined) counts[m.vote] += 1
-    return counts
-  }
-
-  startMatch() {
-    const humans = this.eligibleMembers()
-    if (!humans.length) {
-      this.setPhase('waiting', 0)
+  /** Falls: the highest point since you last stood (the mace reads it), and landing hurts. */
+  trackFall(ent, arena, inAir, y, now) {
+    if (inWater(arena.world, ent.x, y, ent.z)) {
+      ent.peakY = y
+      ent.wasAir = false
       return
     }
-    const mode = this.lockedMode || this.pickMode()
-    const mapId = this.pickMap()
-    let botLevel = this.lockedBots || this.pickBotLevel()
-    this.lockedMode = null
-    this.lockedBots = null
-    this.voteStage = 'mode'
-    // A no-bots round needs two people; alone, (Medium) bots join in.
-    if (botLevel === 'off' && humans.length < 2) {
-      botLevel = 'normal'
-      // Only worth saying if someone actually asked for no bots.
-      if ([...this.members.values()].some((m) => m.botVote === 'off')) this.toZone('lobby', 'toast', { text: 'No-bots rounds need 2 players - bots join in!' })
+    if (inAir) {
+      if (!ent.wasAir) ent.peakY = Math.max(ent.y, y)
+      else ent.peakY = Math.max(ent.peakY, y)
+      ent.wasAir = true
+      return
     }
-    this.lastMap = mapId
-    const seed = Math.floor(this.random() * 2 ** 31)
-    const gen = generateMatch(mapId, seed, mode)
-    let teamCount = MODES[mode].teams || 0
-    this.match = {
-      mapId,
-      seed,
+    if (ent.wasAir && arena.phase === 'fight') {
+      const fall = ent.peakY - y
+      const wet = isWater(arena.world.get(ent.x, y, ent.z))
+      if (fall > COMBAT.safeFall && now > ent.noFallUntil && !wet) this.damage(ent, Math.ceil(fall - COMBAT.safeFall), null, 'fall', { pierce: true, iframes: false })
+    }
+    ent.wasAir = false
+    ent.peakY = y
+  }
+
+  // --- The lobby and the queues ------------------------------------------------------------
+
+  /**
+   * Someone says they reached the top of the parkour: they must be standing on it, and
+   * not have just claimed. The lobby hears about it.
+   */
+  onParkourDone(member, ent, ms) {
+    const now = this.now()
+    const f = this.lobby.parkour.finish
+    if (ent.zone !== 'lobby' || now - (member.parkourAt || 0) < 15_000) return
+    if (Math.hypot(ent.x - f.x, ent.z - f.z) > 3 || ent.y < f.y - 1.5 || !(ms >= 6000 && ms < 3_600_000)) return
+    member.parkourAt = now
+    this.onParkour(ent.cid, ms)
+    this.toZone('lobby', null, 'toast', { text: `${ent.name} finished the parkour in ${(ms / 1000).toFixed(1)}s!`, kind: 'success' })
+  }
+
+  joinQueue(member, ent, mode) {
+    if (!MODES[mode]) return
+    if (member.duel || ent.zone !== 'lobby') {
+      if (ent.cid) this.sendTo(ent.cid, 'toast', { text: 'Leave your game first', kind: 'error' })
+      return
+    }
+    member.queue = mode
+    member.queuedAt = this.now()
+    member.lastMode = mode
+    this.phaseDirty = true
+  }
+
+  /**
+   * Pairs everyone searching for a duel: two people who picked the same mode first; then
+   * anyone left over with anyone else, straight away, in the mode of whoever has waited
+   * longer - nobody sits in a queue while someone else in the room is searching too.
+   * (Tests with `duelBots`: someone alone long enough gets a bot.)
+   */
+  matchmake(now) {
+    const waiting = new Map()
+    for (const m of this.members.values()) {
+      if (!m.queue || m.duel) continue
+      if (!waiting.has(m.queue)) waiting.set(m.queue, [])
+      waiting.get(m.queue).push(m)
+    }
+    const leftover = []
+    for (const [mode, list] of waiting) {
+      list.sort((a, b) => a.queuedAt - b.queuedAt)
+      while (list.length >= 2) {
+        const a = list.shift()
+        const b = list.shift()
+        this.createDuel(mode, [this.ents.get(a.eid), this.ents.get(b.eid)])
+      }
+      if (list.length === 1) leftover.push(list[0])
+    }
+    leftover.sort((a, b) => a.queuedAt - b.queuedAt)
+    while (leftover.length >= 2) {
+      const a = leftover.shift()
+      const b = leftover.shift()
+      this.createDuel(a.queue, [this.ents.get(a.eid), this.ents.get(b.eid)])
+    }
+    if (this.duelBots && leftover.length === 1) {
+      const m = leftover[0]
+      if (now - m.queuedAt >= (this.members.size <= 1 ? DUEL.soloBotMs : DUEL.botFillMs)) this.createDuel(m.queue, [this.ents.get(m.eid), null])
+    }
+  }
+
+  /** A duel between two players (or a player and a bot: `null`), starting with the map vote. */
+  createDuel(mode, sides) {
+    const key = `d${this.nextArena++}`
+    const now = this.now()
+    const ents = sides.map((e, i) => e || this.makeBot(mode, i))
+    const arena = {
+      key,
+      kind: 'duel',
       mode,
-      world: gen.world,
-      spawns: gen.spawns,
-      lucky: gen.lucky,
-      middle: gen.middle,
+      mapId: null,
+      seed: Math.floor(this.random() * 2 ** 31),
+      world: null,
+      spawns: [],
       edits: new Map(),
       pending: [],
-      tnts: [],
       projs: [],
+      fires: [],
+      fireBy: new Map(),
       nextProj: 1,
-      fightStart: 0,
-      fighters: 0,
-      lavaY: LAVA.startY,
-      humans: humans.length,
-      stats: { deaths: {}, byPlayer: 0, firstKillMs: 0, lucky: 0, placed: 0 },
+      phase: 'vote',
+      phaseEnds: now + DUEL.voteMs,
+      fighters: ents.map((e) => e.eid),
+      score: new Map(ents.map((e) => [e.eid, 0])),
+      round: 0,
+      draws: 0,
+      votes: new Map(),
+      mapOptions: [...DUEL_MAP_IDS],
+      placed: new Set(),
+      protect: true,
+      startedAt: now,
+      roundWinner: null,
+      winner: null,
+      botLevel: 'easy',
     }
-    this.match.botLevel = botLevel
-    for (const m of this.members.values()) {
-      m.vote = null
-      m.mapVote = null
-    }
-
-    const fighters = []
-    for (const m of humans.slice(0, ROUND.maxFighters)) fighters.push(this.ents.get(m.eid))
-    const botCount = botLevel === 'off' ? 0 : clamp(ROUND.minFighters - fighters.length, 0, ROUND.maxFighters - fighters.length)
-    const names = [...BOT_NAMES].sort(() => this.random() - 0.5)
-    for (let i = 0; i < botCount; i += 1) {
-      const eid = this.nextEid++
-      const capes = ['none', 'none', 'crimson', 'ocean', 'leaf', 'checker', 'pixel', 'lucky']
-      const bot = this.makeEnt(eid, names[i % names.length], {
-        bot: true,
-        cape: capes[Math.floor(this.random() * capes.length)],
-        // A believable level for the nameplate (from the eid, so the rng sequence is untouched).
-        level: 2 + ((eid * 7) % 19),
-      })
-      this.ents.set(eid, bot)
-      fighters.push(bot)
-    }
-    const hpBonus = MODES[mode].hpBonus
-    // Fewer fighters than teams (a small no-bots round): fewer teams; one team is solo.
-    teamCount = Math.min(teamCount, fighters.length)
-    if (teamCount < 2) teamCount = 0
-    const seats = this.seatFighters(fighters, teamCount)
-    this.match.teamSize = teamCount ? Math.max(...seats.sizes) : 1
-    this.match.teams = teamCount
-    for (const { ent, island, team, bonus } of seats.list) {
-      // In solo everyone is their own team, so "same team" never matches.
-      ent.team = team
-      ent.rewarded = null
-      ent.pendingReward = false
-      ent.playedRound = this.match
-      const s = gen.spawns[island]
-      ent.zone = 'match'
-      ent.alive = true
-      ent.maxHp = ROUND.hp + hpBonus + bonus
-      ent.hp = ent.maxHp
-      ent.inv = new Array(HOTBAR).fill(null)
-      ent.inv[0] = { id: 'wood_sword', n: 1 }
-      ent.sel = 0
-      ent.effects = {}
-      ent.kills = 0
-      ent.lucky = 0
-      ent.placed = 0
-      ent.diedHow = null
-      ent.diedAt = 0
-      ent.lastHitBy = null
-      ent.lastHurtAt = 0
-      ent.dirty = true
-      ent.island = island
-      ent.yaw = Math.atan2(-(gen.middle.x - s.x), -(gen.middle.z - s.z))
-      if (ent.bot) {
-        ent.body = createBody(s.x, s.y, s.z)
-        ent.brain = createBrain(this.random, this.match.botLevel)
-        ent.x = s.x
-        ent.y = s.y
-        ent.z = s.z
+    this.arenas.set(key, arena)
+    ents.forEach((e, i) => {
+      e.team = i
+      e.stats = freshStats()
+      e.kills = 0
+      if (e.bot) {
+        arena.votes.set(e.eid, arena.mapOptions[Math.floor(this.random() * arena.mapOptions.length)])
+        e.arena = key
+        e.zone = 'limbo'
       } else {
-        this.sendMatch(ent)
-        this.teleport(ent, s.x, s.y, s.z, ent.yaw)
+        const m = this.members.get(e.cid)
+        // Searching from Spirelands: out of it and back to the lobby for the map vote.
+        if (e.arena === 'ffa') this.pullFromFfa(e)
+        m.queue = null
+        m.duel = key
+        if (e.cid) this.sendTo(e.cid, 'toast', { text: `Opponent found: ${ents[1 - i].name}!`, kind: 'success' })
+      }
+    })
+    this.phaseDirty = true
+    this.rosterDirty = true
+    return arena
+  }
+
+  /** Out of Spirelands to the lobby (an opponent was found for the duel you searched for). */
+  pullFromFfa(ent) {
+    const arena = this.arenas.get('ffa')
+    if (arena) {
+      if (ent.alive && ent.lifeKills > 0) this.reward(ent, { kind: 'ffa', mode: ent.kit, win: false, kills: ent.lifeKills, hits: ent.stats.hits, bestCombo: ent.stats.best, bounties: ent.bounties || 0 })
+      if (ent.alive) this.toArena(arena, 'feed', { k: '', v: ent.name, how: 'left' })
+    }
+    ent.alive = false
+    this.toLobby(ent)
+  }
+
+  makeBot(mode, team) {
+    const eid = this.nextEid++
+    const taken = new Set([...this.ents.values()].map((e) => e.name))
+    const free = BOT_NAMES.filter((n) => !taken.has(n))
+    const pool = free.length ? free : BOT_NAMES
+    const name = pool[Math.floor(this.random() * pool.length)]
+    // Bots' kill effects (the 'cape' slot).
+    const capes = ['none', 'none', 'crimson', 'ocean', 'leaf', 'checker', 'pixel', 'galaxy']
+    const bot = this.makeEnt(eid, name, { bot: true, cape: capes[Math.floor(this.random() * capes.length)], level: 2 + ((eid * 7) % 30), team })
+    bot.kit = mode
+    // A random Bloxity outfit, so no two bots look alike.
+    bot.look = JSON.stringify({ equipped: { skinId: String(Math.floor(this.random() * BOT_SKINS)) }, proportions: {} })
+    this.ents.set(eid, bot)
+    return bot
+  }
+
+  /** The vote is in: build the arena and bring both fighters in for round one. */
+  startDuel(arena) {
+    const counts = {}
+    for (const v of arena.votes.values()) counts[v] = (counts[v] || 0) + 1
+    const best = Math.max(0, ...Object.values(counts))
+    const pool = best ? arena.mapOptions.filter((id) => counts[id] === best) : arena.mapOptions
+    arena.mapId = pool[Math.floor(this.random() * pool.length)]
+    for (const eid of arena.fighters) {
+      const e = this.ents.get(eid)
+      if (e && !e.bot) {
+        const m = this.members.get(e.cid)
+        if (m) m.duels += 1
       }
     }
-    this.match.fighters = fighters.length
-    this.setPhase('cages', ROUND.cagesMs)
+    this.startRound(arena)
+    this.track('duel_start', { mode: arena.mode, map: arena.mapId, bot: arena.fighters.some((eid) => this.ents.get(eid)?.bot) })
+  }
+
+  /** A fresh arena, full health and kits, both on their spawns, and the countdown. */
+  startRound(arena) {
+    const gen = generateArena(arena.mapId, arena.seed)
+    arena.world = gen.world
+    arena.campfires = new Set()
+    arena.fires = []
+    arena.water = new Set()
+    arena.waterAt = 0
+    arena.spawns = gen.spawns
+    arena.center = gen.center
+    arena.edits.clear()
+    arena.pending = []
+    arena.projs = []
+    arena.placed.clear()
+    arena.round += 1
+    arena.roundWinner = null
+    arena.fighters.forEach((eid, i) => {
+      const e = this.ents.get(eid)
+      if (!e) return
+      const s = gen.spawns[i]
+      const yaw = Math.atan2(-(gen.center.x - s.x), -(gen.center.z - s.z))
+      this.equip(e, arena.mode)
+      e.zone = 'match'
+      e.arena = arena.key
+      e.alive = true
+      e.yaw = yaw
+      if (e.bot) {
+        e.body = createBody(s.x, s.y, s.z)
+        e.brain = createBrain(this.random, arena.botLevel)
+        this.teleport(e, s.x, s.y, s.z, yaw)
+      } else {
+        this.sendMatch(e, arena)
+        this.teleport(e, s.x, s.y, s.z, yaw)
+      }
+    })
+    this.setArenaPhase(arena, 'countdown', DUEL.countdownMs)
     this.rosterDirty = true
   }
 
-  /**
-   * Can `ent` (in the lobby, or watching) still join the round in progress? Not if they
-   * already played in it, nor late in a fight; there must be a bot to take over or a free
-   * island. Returns a reason when not.
-   */
-  joinBlocked(ent) {
-    const m = this.match
-    if (!m || (this.phase !== 'cages' && this.phase !== 'fight')) return 'No round to join'
-    if (ent.zone === 'match' || ent.playedRound === m) return 'You already played this round'
-    if (this.phase === 'fight' && (this.phaseEnds - this.now() < 40_000 || m.lavaY > ISLAND_TOP - 6)) return 'Too late to join this round'
-    const bot = [...this.ents.values()].some((e) => e.bot && e.alive && e.zone === 'match')
-    if (!bot && this.freeIslands().length === 0) return 'This round is full'
-    return null
+  /** Kit, armour and health for a fight. */
+  equip(e, mode) {
+    e.kit = mode
+    e.inv = kitHotbar(mode)
+    e.sel = 0
+    e.armor = kitArmor(mode)
+    e.hp = HP
+    e.maxHp = HP
+    e.absorb = 0
+    e.effects = {}
+    e.air = AIR.ms
+    e.airBubbles = AIR.bubbles
+    e.lastHitBy = null
+    e.lastHurtAt = 0
+    e.hurtUntil = 0
+    e.blocking = false
+    e.shieldOffUntil = 0
+    e.lungeAt = 0
+    e.lungeUntil = 0
+    e.noFallUntil = 0
+    e.wasAir = false
+    e.lifeKills = 0
+    e.dirty = true
   }
 
-  /** Islands nobody has fought from this round. */
-  freeIslands() {
-    const used = new Set()
-    for (const e of this.ents.values()) if (e.playedRound === this.match && e.island !== undefined) used.add(e.island)
-    return [0, 1, 2, 3, 4, 5, 6, 7].filter((i) => !used.has(i))
-  }
-
-  /**
-   * Joins a round in progress: takes over a bot (their island, health and hotbar, on the
-   * team with the fewest people) or, with no bots, starts on a free island.
-   */
-  joinRound(ent) {
-    const why = this.joinBlocked(ent)
-    if (why) {
-      if (ent.cid) this.sendTo(ent.cid, 'toast', { text: why, kind: 'error' })
-      return
-    }
-    const m = this.match
-    const peopleOn = (team) => [...this.ents.values()].filter((e) => !e.bot && e.alive && e.zone === 'match' && e.team === team).length
-    const bots = [...this.ents.values()].filter((e) => e.bot && e.alive && e.zone === 'match').sort((a, b) => peopleOn(a.team) - peopleOn(b.team))
-    const bot = bots[0]
-    if (ent.zone === 'spec') ent.zone = 'lobby'
-    ent.alive = true
-    ent.zone = 'match'
-    ent.playedRound = m
-    ent.rewarded = null
-    ent.pendingReward = false
-    ent.kills = 0
-    ent.lucky = 0
-    ent.placed = 0
-    ent.diedHow = null
-    ent.diedAt = 0
-    ent.effects = {}
-    ent.lastHitBy = null
-    ent.lastHurtAt = 0
-    ent.dirty = true
-    let x
-    let y
-    let z
-    if (bot) {
-      Object.assign(ent, { team: bot.team, island: bot.island, hp: bot.hp, maxHp: bot.maxHp, inv: bot.inv.map((s) => (s ? { ...s } : null)), sel: bot.sel, yaw: bot.yaw })
-      x = bot.x
-      y = bot.y
-      z = bot.z
-      this.ents.delete(bot.eid)
-      this.toMatchViewers('toast', { text: `${ent.name} joined the round (took over ${bot.name})` })
-    } else {
-      const island = this.freeIslands()[0]
-      const teams = m.teams || 0
-      if (teams) {
-        const alive = Array.from({ length: teams }, (_, t) => this.aliveFighters().filter((e) => e.team === t).length)
-        ent.team = alive.indexOf(Math.min(...alive))
-      } else {
-        ent.team = Math.max(-1, ...[...this.ents.values()].map((e) => (e.playedRound === m ? e.team : -1))) + 1
-      }
-      ent.island = island
-      ent.maxHp = ROUND.hp + (MODES[m.mode].hpBonus || 0)
-      ent.hp = ent.maxHp
-      ent.inv = new Array(HOTBAR).fill(null)
-      ent.inv[0] = { id: 'wood_sword', n: 1 }
-      ent.sel = 0
-      const s = m.spawns[island]
-      x = s.x
-      z = s.z
-      // In a fight the cages are gone: straight onto the island.
-      y = this.phase === 'fight' ? ISLAND_TOP + 1 : s.y
-      m.fighters += 1
-      this.toMatchViewers('toast', { text: `${ent.name} joined the round!` })
-    }
-    this.sendMatch(ent)
-    this.teleport(ent, x, y, z, ent.yaw)
-    this.rosterDirty = true
+  setArenaPhase(arena, phase, ms) {
+    arena.phase = phase
+    arena.phaseEnds = this.now() + ms
     this.phaseDirty = true
   }
 
-  /**
-   * Who sits where. Solo: islands at random, everyone their own team. Teams: the ring is
-   * cut into `teamCount` runs of neighbouring islands (as even as 8 allows: 4+4,
-   * 3+3+2, 2+2+2+2); the real players are dealt round the teams first so no team is all
-   * bots while another is all people, then bots fill the empty seats. A team short of a
-   * member gets extra hearts each. Returns `{ list: [{ ent, island, team, bonus }], sizes }`.
-   */
-  seatFighters(fighters, teamCount) {
-    const n = fighters.length
-    if (!teamCount) {
-      const islands = [0, 1, 2, 3, 4, 5, 6, 7].sort(() => this.random() - 0.5)
-      return { list: fighters.map((ent, i) => ({ ent, island: islands[i % 8], team: i, bonus: 0 })), sizes: [1] }
-    }
-    const sizes = Array.from({ length: teamCount }, (_, t) => Math.floor(n / teamCount) + (t < n % teamCount ? 1 : 0))
-    const biggest = Math.max(...sizes)
-    // Each team's islands: a run round the ring from a random start.
-    const start = Math.floor(this.random() * 8)
-    const runs = []
-    let at = 0
-    for (const size of sizes) {
-      runs.push(Array.from({ length: size }, (_, k) => (start + at + k) % 8))
-      at += size
-    }
-    const teams = sizes.map(() => [])
-    const order = sizes.map((_, t) => t).sort(() => this.random() - 0.5)
-    const humans = fighters.filter((e) => !e.bot).sort(() => this.random() - 0.5)
-    const bots = fighters.filter((e) => e.bot)
-    let k = 0
-    for (const ent of humans) {
-      // The next team in turn that still has a seat.
-      for (let tries = 0; tries < teamCount; tries += 1) {
-        const t = order[k % teamCount]
-        k += 1
-        if (teams[t].length < sizes[t]) {
-          teams[t].push(ent)
-          break
-        }
+  tickDuel(arena, dt, now) {
+    if (arena.phase === 'vote') {
+      const humans = arena.fighters.map((eid) => this.ents.get(eid)).filter((e) => e && !e.bot)
+      if (now >= arena.phaseEnds || humans.every((e) => arena.votes.has(e.eid))) this.startDuel(arena)
+    } else if (arena.phase === 'countdown') {
+      if (now >= arena.phaseEnds) {
+        this.setArenaPhase(arena, 'fight', DUEL.roundMs)
+        arena.fightStart = now
       }
+    } else if (arena.phase === 'fight') {
+      this.tickFighters(arena, dt, now)
+      if (arena.phase === 'fight' && now >= arena.phaseEnds) this.duelTimeUp(arena)
+    } else if (arena.phase === 'between') {
+      if (now >= arena.phaseEnds) this.startRound(arena)
+    } else if (arena.phase === 'ended') {
+      if (now >= arena.phaseEnds) this.closeDuel(arena)
     }
-    for (const ent of bots) {
-      const t = teams.findIndex((list, i) => list.length < sizes[i])
-      teams[t].push(ent)
+  }
+
+  /** Time's up: the healthier fighter (by share of health left) takes the round. */
+  duelTimeUp(arena) {
+    const [a, b] = arena.fighters.map((eid) => this.ents.get(eid))
+    const share = (e) => (e && e.alive ? (e.hp + e.absorb) / e.maxHp : -1)
+    const diff = share(a) - share(b)
+    this.roundOver(arena, Math.abs(diff) < 0.001 ? null : diff > 0 ? a : b, 'time')
+  }
+
+  /** A round is decided (`winner` null for a draw): the next one, or the end of the duel. */
+  roundOver(arena, winner, why = 'kill') {
+    if (arena.phase !== 'fight') return
+    arena.projs = []
+    if (winner) arena.score.set(winner.eid, (arena.score.get(winner.eid) || 0) + 1)
+    else arena.draws += 1
+    arena.roundWinner = winner ? winner.eid : 0
+    const score = this.scoreList(arena)
+    this.toArena(arena, 'roundEnd', { winner: winner?.eid || 0, name: winner?.name || '', why, score, round: arena.round })
+    const ft = MODES[arena.mode].ft
+    const top = winner ? arena.score.get(winner.eid) : 0
+    // Endless draws can't hold a duel hostage: after enough rounds the score decides.
+    if (top >= ft || arena.round >= ft * 2 + 2) {
+      const sorted = [...arena.score.entries()].sort((p, q) => q[1] - p[1])
+      const champ = sorted[0][1] > (sorted[1]?.[1] ?? -1) ? this.ents.get(sorted[0][0]) : null
+      this.endDuel(arena, champ, false)
+    } else {
+      this.setArenaPhase(arena, 'between', DUEL.betweenMs)
     }
-    const list = []
-    teams.forEach((members, t) => {
-      members.forEach((ent, i) => list.push({ ent, island: runs[t][i], team: t, bonus: (biggest - sizes[t]) * 4 }))
+  }
+
+  scoreList(arena) {
+    return arena.fighters.map((eid) => {
+      const e = this.ents.get(eid)
+      return { eid, name: e?.name || 'Player', wins: arena.score.get(eid) || 0, team: e?.team ?? 0, bot: Boolean(e?.bot) }
     })
-    return { list, sizes }
   }
 
-  /**
-   * The bots the room voted for; with no votes, none. Alone in the room there are always
-   * bots: the level voted for, else Medium.
-   */
-  pickBotLevel() {
-    if (this.eligibleMembers().length < 2) {
-      const mine = [...this.members.values()].map((m) => m.botVote).find((v) => v && v !== 'off')
-      return mine || 'normal'
+  endDuel(arena, winner, forfeit) {
+    if (arena.phase === 'ended') return
+    arena.winner = winner ? winner.eid : 0
+    this.setArenaPhase(arena, 'ended', DUEL.endMs)
+    const score = this.scoreList(arena)
+    this.toArena(arena, 'duelEnd', { winner: winner?.eid || 0, name: winner?.name || 'Nobody', score, forfeit: Boolean(forfeit), mode: arena.mode })
+    for (const eid of arena.fighters) {
+      const e = this.ents.get(eid)
+      if (!e || e.bot || !e.cid) continue
+      // Duel stats travel with the reward card.
+      this.sendTo(e.cid, 'duelStats', { ...e.stats })
+      this.reward(e, { kind: 'duel', mode: arena.mode, win: winner === e, kills: e.kills, hits: e.stats.hits, bestCombo: e.stats.best })
     }
-    const counts = this.botVoteCounts()
-    const best = Math.max(0, ...Object.values(counts))
-    if (!best) return 'off'
-    const top = BOT_LEVEL_IDS.filter((id) => counts[id] === best)
-    return top[Math.floor(this.random() * top.length)]
+    this.track('duel_end', {
+      mode: arena.mode,
+      map: arena.mapId,
+      rounds: arena.round,
+      forfeit: Boolean(forfeit),
+      bot: arena.fighters.some((eid) => this.ents.get(eid)?.bot),
+      winnerBot: winner ? Boolean(winner.bot) : null,
+      durationMs: this.now() - arena.startedAt,
+    })
   }
 
-  botVoteCounts() {
-    const counts = Object.fromEntries(BOT_LEVEL_IDS.map((id) => [id, 0]))
-    for (const m of this.members.values()) if (m.botVote && counts[m.botVote] !== undefined) counts[m.botVote] += 1
-    return counts
-  }
-
-  /** Tells a player about the round's world (and every change to it so far). */
-  sendMatch(ent) {
-    const m = this.match
-    if (!m || !ent.cid) return
-    const edits = []
-    for (const [key, id] of m.edits) edits.push(key, id)
-    this.sendTo(ent.cid, 'match', { map: m.mapId, seed: m.seed, mode: m.mode, edits })
-  }
-
-  openCages() {
-    const m = this.match
-    for (const s of m.spawns) {
-      for (let y = Math.floor(s.y) - 1; y <= Math.floor(s.y) + 3; y += 1) {
-        for (let dx = -1; dx <= 1; dx += 1) {
-          for (let dz = -1; dz <= 1; dz += 1) {
-            const x = Math.floor(s.x) + dx
-            const z = Math.floor(s.z) + dz
-            if (m.world.get(x, y, z) === B.CAGE) this.setBlock(x, y, z, B.AIR)
-          }
-        }
-      }
-    }
-    m.fightStart = this.now()
-    this.setPhase('fight', ROUND.fightMs)
-  }
-
-  timeUp() {
-    this.match.timeUp = true
-    const alive = this.aliveFighters()
-    alive.sort((a, b) => b.hp - a.hp || b.kills - a.kills)
-    this.endMatch(alive[0] || null)
-  }
-
-  /** Teams with someone still standing. */
-  aliveTeams() {
-    const teams = new Set()
-    for (const e of this.ents.values()) if (e.zone === 'match' && e.alive) teams.add(e.team)
-    return teams
-  }
-
-  aliveFighters() {
-    return [...this.ents.values()].filter((e) => e.zone === 'match' && e.alive)
-  }
-
-  checkWin(lastDead = null) {
-    if (this.phase !== 'fight' && this.phase !== 'cages') return
-    const alive = this.aliveFighters()
-    // One team (or one player) left - or everyone gone at once in the lava, when the
-    // last one to fall wins.
-    if (this.aliveTeams().size <= 1) this.endMatch(alive[0] || lastDead)
-    else if (!alive.some((e) => !e.bot)) {
-      // Every real player is out: the bots don't play on by themselves. The healthiest
-      // bot takes the round and everyone heads back for the next one.
-      alive.sort((a, b) => b.hp - a.hp || b.kills - a.kills)
-      this.endMatch(alive[0])
-    }
-  }
-
-  endMatch(winner) {
-    if (this.phase === 'ended') return
-    const m = this.match
-    if (m.fightStart) {
-      this.track('round', {
-        mode: m.mode,
-        map: m.mapId,
-        botLevel: m.botLevel,
-        fighters: m.fighters,
-        humans: m.humans,
-        durationMs: this.now() - m.fightStart,
-        reason: m.timeUp ? 'time' : 'last-standing',
-        winnerBot: winner ? Boolean(winner.bot) : null,
-        deaths: m.stats.deaths,
-        byPlayer: m.stats.byPlayer,
-        firstKillMs: m.stats.firstKillMs,
-        lucky: m.stats.lucky,
-        placed: m.stats.placed,
-        lavaY: Math.round(m.lavaY * 10) / 10,
-      })
-    }
-    this.setPhase('ended', ROUND.endMs)
-    const teamSize = this.match.teamSize || 1
-    const winTeam = winner ? winner.team : null
-    // The whole winning team wins, fallen teammates included.
-    for (const e of this.ents.values()) {
-      if (winner && (e === winner || (teamSize > 1 && e.team === winTeam && (e.zone === 'match' || e.zone === 'spec')))) this.reward(e, 1)
-    }
-    // Anyone else still standing when time ran out: placed by health.
-    const rest = this.aliveFighters()
-      .filter((e) => e.team !== winTeam)
-      .sort((a, b) => b.hp - a.hp)
-    rest.forEach((e, i) => this.reward(e, i + 2))
-    const label = teamSize > 1 && winner ? `${TEAMS[winTeam % TEAMS.length].name} Team` : winner?.name || 'Nobody'
-    const msg = { eid: winner?.eid ?? 0, name: label, team: teamSize > 1 ? winTeam : -1 }
-    this.toZone('match', 'win', msg)
-    this.toZone('spec', 'win', msg)
-    // Players in the lobby hear about it too.
-    this.toZone('lobby', 'toast', { text: `${label} won the round!` })
-  }
-
-  backToLobby() {
-    for (const ent of [...this.ents.values()]) {
-      if (ent.bot) {
-        this.ents.delete(ent.eid)
+  /** The duel is over: everyone still in it goes back to the lobby. */
+  closeDuel(arena) {
+    for (const eid of arena.fighters) {
+      const e = this.ents.get(eid)
+      if (!e) continue
+      if (e.bot) {
+        this.ents.delete(eid)
         continue
       }
-      if (ent.zone === 'match' || ent.zone === 'spec') this.toLobby(ent)
+      const m = this.members.get(e.cid)
+      if (m?.duel === arena.key) {
+        m.duel = null
+        if (e.arena === arena.key) this.toLobby(e)
+      }
     }
-    this.match = null
+    this.arenas.delete(arena.key)
     this.rosterDirty = true
-    this.phase = 'waiting'
-    this.maybeStartIntermission(ROUND.intermissionAfterMs)
     this.phaseDirty = true
   }
 
-  toLobby(ent, announce = true) {
-    ent.zone = 'lobby'
-    ent.alive = false
-    ent.hp = ROUND.hp
-    ent.maxHp = ROUND.hp
-    ent.inv = new Array(HOTBAR).fill(null)
-    ent.effects = {}
-    ent.dirty = true
-    const s = this.lobby.spawn
-    const a = this.random() * Math.PI * 2
-    const r = this.random() * 3
-    // Facing the plaza (yaw 0 looks toward -z).
-    this.teleport(ent, s.x + Math.cos(a) * r, s.y, s.z + Math.sin(a) * r, 0)
-    if (announce && ent.cid) this.sendTo(ent.cid, 'lobby', {})
-  }
-
-  /** An analytics event; never lets a failing sink break the game. */
-  track(type, data) {
-    try {
-      this.onAnalytics(type, data)
-    } catch {
-      // Analytics are best effort.
+  /**
+   * `ent` walks out of whatever game it's in (back to the lobby, or gone): a duel not yet
+   * decided is a forfeit; a Spirelands life is paid out.
+   */
+  leaveArena(ent, why) {
+    const member = ent.cid ? this.members.get(ent.cid) : null
+    const key = member?.duel || ent.arena
+    const arena = this.arenas.get(key)
+    // Out of a duel: no queue. Out of Spirelands: a duel search you started goes on.
+    if (member && arena?.kind !== 'ffa') member.queue = null
+    if (!arena) return
+    if (arena.kind === 'duel') {
+      if (member) member.duel = null
+      const other = arena.fighters.map((eid) => this.ents.get(eid)).find((e) => e && e !== ent)
+      if (arena.phase === 'vote') {
+        // Not started yet: the other player goes back in the queue.
+        if (other && !other.bot) {
+          const om = this.members.get(other.cid)
+          if (om) {
+            om.duel = null
+            om.queue = arena.mode
+            om.queuedAt = this.now()
+            this.sendTo(other.cid, 'toast', { text: 'Your opponent left - back in the queue', kind: 'error' })
+          }
+        }
+        for (const eid of arena.fighters) if (this.ents.get(eid)?.bot) this.ents.delete(eid)
+        this.arenas.delete(arena.key)
+      } else if (arena.phase !== 'ended') {
+        ent.alive = false
+        this.endDuel(arena, other || null, true)
+        if (other && !other.bot) this.sendTo(other.cid, 'toast', { text: `${ent.name} left - you win!`, kind: 'success' })
+      }
+      // Nobody real left in it: close it now.
+      if (this.arenas.has(arena.key) && !arena.fighters.some((eid) => {
+        const e = this.ents.get(eid)
+        return e && !e.bot && e !== ent && this.members.get(e.cid)?.duel === arena.key
+      })) this.closeDuel(arena)
+    } else if (arena.kind === 'ffa') {
+      if (ent.alive && ent.lifeKills > 0) this.reward(ent, { kind: 'ffa', mode: ent.kit, win: false, kills: ent.lifeKills, hits: ent.stats.hits, bestCombo: ent.stats.best, bounties: ent.bounties || 0 })
+      ent.alive = false
+      this.toArena(arena, 'feed', { k: '', v: ent.name, how: why === 'left' ? 'left' : why })
     }
+    ent.arena = null
+    this.rosterDirty = true
+    this.phaseDirty = true
   }
 
-  /** A player's round is over: their cash, kills and (maybe) the win. */
-  reward(ent, placement) {
-    if (!ent.cid || ent.rewarded === this.match) return
-    ent.rewarded = this.match
-    const member = this.members.get(ent.cid)
-    if (member) member.rounds += 1
-    const m = this.match
-    this.track('player_round', {
-      mode: m.mode,
-      map: m.mapId,
-      placement,
-      win: placement === 1,
-      died: ent.diedHow || null,
-      byPlayer: Boolean(ent.diedByPlayer),
-      survivedMs: m.fightStart ? (ent.diedAt || this.now()) - m.fightStart : 0,
-      kills: ent.kills,
-      lucky: ent.lucky || 0,
-      placed: ent.placed || 0,
-      level: ent.level || 1,
-    })
-    this.onReward(ent.cid, {
-      kills: ent.kills,
-      lucky: ent.lucky || 0,
-      placed: ent.placed || 0,
-      placement,
-      fighters: this.match.fighters,
-      win: placement === 1,
-      mode: this.match.mode,
-    })
+  // --- Spirelands ---------------------------------------------------------------------------
+
+  ffaArena() {
+    let arena = this.arenas.get('ffa')
+    if (arena) return arena
+    const gen = generateSpirelands(FFA_SEED)
+    arena = {
+      key: 'ffa',
+      kind: 'ffa',
+      mode: 'ffa',
+      mapId: 'spirelands',
+      seed: FFA_SEED,
+      world: gen.world,
+      spawns: gen.spawns,
+      center: gen.center,
+      chests: gen.chests.map((c) => ({ ...c, refillAt: 0 })),
+      edits: new Map(),
+      pending: [],
+      projs: [],
+      fires: [],
+      fireBy: new Map(),
+      nextProj: 1,
+      phase: 'fight',
+      phaseEnds: 0,
+      placed: new Set(),
+      protect: false,
+      orig: new Map(),
+      restore: [],
+      botLevel: 'easy',
+    }
+    this.arenas.set('ffa', arena)
+    return arena
+  }
+
+  enterFfa(member, ent) {
+    if (member.duel || ent.zone !== 'lobby') return
+    // A duel search carries on in here: when an opponent turns up you're pulled out to it.
+    const arena = this.ffaArena()
+    ent.zone = 'spec'
+    ent.arena = 'ffa'
+    ent.alive = false
+    ent.needKit = true
+    ent.team = -1
+    ent.kills = 0
+    this.sendMatch(ent, arena)
+    const c = arena.center
+    this.teleport(ent, c.x, c.y + 18, c.z, 0)
+    this.rosterDirty = true
+    this.phaseDirty = true
+  }
+
+  pickKit(ent, mode) {
+    const arena = this.arenas.get(ent.arena)
+    if (!arena || arena.kind !== 'ffa' || ent.alive || !MODES[mode]) return
+    this.spawnFfa(arena, ent, mode)
+  }
+
+  /** Into Spirelands with a kit, at the spawn farthest from anyone fighting. */
+  spawnFfa(arena, ent, mode) {
+    const others = [...this.ents.values()].filter((e) => e !== ent && e.arena === arena.key && e.alive)
+    let best = arena.spawns[0]
+    let bestD = -1
+    for (const s of arena.spawns) {
+      const d = others.length ? Math.min(...others.map((o) => Math.hypot(o.x - s.x, o.z - s.z))) : this.random() * 10
+      if (d > bestD) {
+        best = s
+        bestD = d
+      }
+    }
+    this.equip(ent, mode)
+    ent.stats = freshStats()
+    ent.bounties = 0
+    ent.zone = 'match'
+    ent.arena = arena.key
+    ent.alive = true
+    ent.needKit = false
+    const yaw = this.random() * Math.PI * 2
+    if (ent.bot) {
+      ent.body = createBody(best.x, best.y, best.z)
+      ent.brain = createBrain(this.random, arena.botLevel)
+    } else if (ent.cid && ent.lastWorld !== arena.key) this.sendMatch(ent, arena)
+    this.teleport(ent, best.x, best.y, best.z, yaw)
+    this.rosterDirty = true
+    this.phaseDirty = true
+  }
+
+  tickFfa(arena, dt, now) {
+    // A few people: keep the world lively with bots. Nobody, or enough real players
+    // (FFA.population): no bots - they leave and it's people only.
+    let humans = 0
+    const bots = []
+    for (const e of this.ents.values()) {
+      if (e.arena !== arena.key) continue
+      if (e.bot) bots.push(e)
+      else humans += 1
+    }
+    const want = humans ? Math.max(0, FFA.population - humans) : 0
+    if (bots.length > want) {
+      // Retire the dead first, then whoever is furthest from everyone.
+      bots.sort((a, b) => Number(a.alive) - Number(b.alive))
+      for (const b of bots.slice(0, bots.length - want)) {
+        if (b.alive) this.toArena(arena, 'feed', { k: '', v: b.name, how: 'left' })
+        this.ents.delete(b.eid)
+      }
+      this.rosterDirty = true
+    } else if (bots.length < want) {
+      const bot = this.makeBot(BOT_KITS[Math.floor(this.random() * BOT_KITS.length)], -1)
+      bot.arena = arena.key
+      bot.team = -1
+      this.spawnFfa(arena, bot, bot.kit)
+    }
+    for (const b of bots) {
+      if (!b.alive && b.respawnAt && now >= b.respawnAt && this.ents.has(b.eid)) {
+        b.respawnAt = 0
+        this.spawnFfa(arena, b, BOT_KITS[Math.floor(this.random() * BOT_KITS.length)])
+      }
+    }
+    if (!humans && !bots.length) return
+    this.tickFighters(arena, dt, now)
+    this.tickChests(arena, now)
+    // The world mends itself: broken ground grows back, placed blocks crumble.
+    while (arena.restore.length && arena.restore[0].at <= now) {
+      const r = arena.restore.shift()
+      const orig = arena.orig.get(r.key)
+      if (orig === undefined) continue
+      const [x, y, z] = unpackKey(r.key)
+      if (orig !== B.AIR && [...this.ents.values()].some((e) => e.arena === arena.key && e.alive && cellOverlapsBody(x, y, z, e.x, e.y, e.z))) {
+        arena.restore.push({ key: r.key, at: now + 5000 })
+        continue
+      }
+      arena.orig.delete(r.key)
+      arena.placed.delete(r.key)
+      this.setBlock(arena, x, y, z, orig, true)
+    }
   }
 
   // --- The fight ------------------------------------------------------------------------
 
-  tickFight(dt, now) {
-    const m = this.match
-    m.lavaY = lavaHeight(now - m.fightStart, m.mode)
-    // Real players can also leave a round without dying (back to the lobby, closing the
-    // page): once none are left in it, it's over.
-    if (!this.aliveFighters().some((e) => !e.bot)) {
-      this.checkWin()
-      if (this.phase !== 'fight') return
+  tick(dt) {
+    const now = this.now()
+    this.matchmake(now)
+    for (const arena of [...this.arenas.values()]) {
+      if (arena.kind === 'duel') this.tickDuel(arena, dt, now)
+      else this.tickFfa(arena, dt, now)
     }
+    this.flush(dt, now)
+  }
+
+  tickFighters(arena, dt, now) {
     for (const ent of this.ents.values()) {
-      if (ent.zone !== 'match' || !ent.alive) continue
-      if (ent.bot) thinkBot(this, ent, dt, now)
-      this.tickStatus(ent, now)
+      if (ent.arena !== arena.key || ent.zone !== 'match' || !ent.alive) continue
+      if (ent.bot && ent.body) thinkBot(this, arena, ent, dt, now)
+      this.tickStatus(arena, ent, now)
     }
-    this.tickProjectiles(dt, now)
-    for (let i = m.tnts.length - 1; i >= 0; i -= 1) {
-      if (now >= m.tnts[i].at) {
-        const t = m.tnts.splice(i, 1)[0]
-        this.explode(t.x, t.y, t.z, t.owner)
+    this.tickProjectiles(arena, dt, now)
+    this.tickFires(arena, now)
+    this.tickWater(arena, now)
+  }
+
+  // --- Water ---------------------------------------------------------------------------------
+
+  /** Something changed at (x, y, z): water there or next to it settles again soon. */
+  wakeWater(arena, x, y, z) {
+    if (!arena.water) arena.water = new Set()
+    const w = arena.world
+    for (const [dx, dy, dz] of NEIGHBOURS) {
+      const nx = x + dx
+      const ny = y + dy
+      const nz = z + dz
+      if (w.inBounds(nx, ny, nz)) arena.water.add(blockKey(nx, ny, nz))
+    }
+    if (!arena.waterAt) arena.waterAt = this.now() + WATER.stepMs
+  }
+
+  /** Flowing water settles a step: falls, spreads, or dries up where nothing feeds it. */
+  tickWater(arena, now) {
+    if (!arena.water?.size || now < (arena.waterAt || 0)) return
+    arena.waterAt = 0
+    const keys = [...arena.water]
+    arena.water.clear()
+    let budget = WATER.perStep
+    for (const key of keys) {
+      if (budget <= 0) {
+        arena.water.add(key)
+        continue
       }
+      const [x, y, z] = unpackKey(key)
+      if (this.settleWater(arena, x, y, z)) budget -= 1
+    }
+    if (arena.water.size && !arena.waterAt) arena.waterAt = now + WATER.stepMs
+  }
+
+  /** One cell's water rules (Minecraft's): returns whether anything changed. */
+  settleWater(arena, x, y, z) {
+    const w = arena.world
+    const open = (id) => id === B.AIR || id === B.FIRE || BLOCKS[id]?.render === 'cross'
+    // Water spreads sideways only from on top of something: a solid block or still water
+    // (not while falling).
+    const canSpread = (bx, by, bz) => {
+      const below = w.get(bx, by - 1, bz)
+      return by > 0 && !open(below) && (!isWater(below) || below === B.WATER)
+    }
+    let changed = false
+    let id = w.get(x, y, z)
+    let level = waterLevel(id)
+    if (level > 0) {
+      // Flowing water stays only while something feeds it: water above, or water beside
+      // that is closer to its source and spreading.
+      let want = isWater(w.get(x, y + 1, z)) ? 1 : 99
+      for (const [dx, , dz] of SIDES) {
+        const l = waterLevel(w.get(x + dx, y, z + dz))
+        if (l >= 0 && l < 7 && canSpread(x + dx, y, z + dz)) want = Math.min(want, l + 1)
+      }
+      if (want > 7) {
+        this.setWater(arena, x, y, z, B.AIR)
+        return true
+      }
+      if (want !== level) {
+        this.setWater(arena, x, y, z, flowBlock(want))
+        changed = true
+        id = w.get(x, y, z)
+        level = want
+      }
+    }
+    if (level < 0) return changed
+    // Down first; if it can't fall, outwards one level weaker.
+    if (y > 1 && open(w.get(x, y - 1, z))) {
+      this.setWater(arena, x, y - 1, z, flowBlock(1))
+      return true
+    }
+    if (level < 7 && canSpread(x, y, z)) {
+      for (const [dx, , dz] of SIDES) {
+        if (!w.inBounds(x + dx, y, z + dz) || !open(w.get(x + dx, y, z + dz))) continue
+        this.setWater(arena, x + dx, y, z + dz, flowBlock(level + 1))
+        changed = true
+      }
+    }
+    return changed
+  }
+
+  /** The water system's own change: not part of the world that grows back, and it wakes the cells round it. */
+  setWater(arena, x, y, z, id) {
+    this.setBlock(arena, x, y, z, id, true, true)
+    this.wakeWater(arena, x, y, z)
+  }
+
+  // --- Fire -----------------------------------------------------------------------------------
+
+  /** A fire arrow landed at (x, y, z): a small patch of the ground nearby catches. */
+  igniteAt(arena, x, y, z, owner) {
+    const w = arena.world
+    if (isWater(w.get(x, y, z))) return
+    if (!arena.fires) arena.fires = []
+    if (!arena.fireBy) arena.fireBy = new Map()
+    const cx = Math.floor(x)
+    const cy = Math.floor(y + 0.25)
+    const cz = Math.floor(z)
+    const spots = []
+    for (let dx = -2; dx <= 2; dx += 1) {
+      for (let dz = -2; dz <= 2; dz += 1) {
+        for (let dy = -1; dy <= 1; dy += 1) {
+          const bx = cx + dx
+          const by = cy + dy
+          const bz = cz + dz
+          const d = Math.hypot(bx + 0.5 - x, by + 0.2 - y, bz + 0.5 - z)
+          if (d > FIRE.radius + 0.6) continue
+          const here = w.get(bx, by, bz)
+          if ((here !== B.AIR && BLOCKS[here]?.render !== 'cross') || here === B.FIRE) continue
+          if (!w.isSolid(bx, by - 1, bz) || isWater(w.get(bx, by - 1, bz))) continue
+          spots.push({ bx, by, bz, d })
+        }
+      }
+    }
+    spots.sort((a, b) => a.d - b.d)
+    const now = this.now()
+    let lit = 0
+    for (const { bx, by, bz } of spots) {
+      if (lit >= FIRE.cells || arena.fires.length >= FIRE.max) break
+      this.setBlock(arena, bx, by, bz, B.FIRE, true)
+      arena.fires.push({ x: bx, y: by, z: bz, at: now + FIRE.lifeMs + Math.floor(this.random() * 1500) })
+      arena.fireBy.set(blockKey(bx, by, bz), owner)
+      lit += 1
+    }
+    if (lit) this.toArena(arena, 'ignite', { x, y, z })
+  }
+
+  /** Flames burn out. */
+  tickFires(arena, now) {
+    const fires = arena.fires
+    if (!fires?.length) return
+    for (let i = fires.length - 1; i >= 0; i -= 1) {
+      const f = fires[i]
+      if (f.at > now && arena.world.get(f.x, f.y, f.z) === B.FIRE) continue
+      fires.splice(i, 1)
+      arena.fireBy?.delete(blockKey(f.x, f.y, f.z))
+      if (arena.world.get(f.x, f.y, f.z) === B.FIRE) this.setBlock(arena, f.x, f.y, f.z, B.AIR, true)
     }
   }
 
-  tickStatus(ent, now) {
-    const m = this.match
-    if (!ent.alive) return
-    // Lava and the void.
-    if (ent.y < -12 || ent.x < -8 || ent.z < -8 || ent.x > MATCH_SIZE.x + 8 || ent.z > MATCH_SIZE.z + 8) {
-      this.damage(ent, 999, ent.lastHitBy && now - ent.lastHitBy.at < 10000 ? ent.lastHitBy.eid : null, 'void')
-      return
+  /** Water poured at (x, y, z): nearby flames go out, and so does anyone burning there. */
+  douse(arena, x, y, z) {
+    for (const f of arena.fires || []) {
+      if (Math.hypot(f.x + 0.5 - x, f.y + 0.5 - y, f.z + 0.5 - z) <= FIRE.douse) f.at = 0
     }
-    if (ent.y < m.lavaY - 0.1) {
-      if (now - ent.lastLavaAt >= LAVA.tickMs) {
-        ent.lastLavaAt = now
-        ent.effects.burn = now + 3000
-        const by = ent.lastHitBy && now - ent.lastHitBy.at < 10000 ? ent.lastHitBy.eid : null
-        this.damage(ent, LAVA.damage, by, 'lava', 0, 0, 7)
-        if (!ent.alive) return
+    this.tickFires(arena, this.now())
+    for (const e of this.ents.values()) {
+      if (e.arena === arena.key && e.alive && Math.hypot(e.x - x, e.y + 0.9 - y, e.z - z) <= FIRE.douse) this.extinguish(e)
+    }
+    this.toArena(arena, 'douse', { x, y, z })
+  }
+
+  // --- Loot chests (Spirelands) ---------------------------------------------------------------
+
+  /** Opens the chest at (x, y, z): random gear into the inventory; it comes back later. */
+  openChest(ent, x, y, z) {
+    const arena = this.actArena(ent)
+    const chest = arena?.chests?.find((c) => c.x === x && c.y === y && c.z === z)
+    if (!chest || arena.world.get(x, y, z) !== B.LOOT_CHEST || !this.inReach(ent, x, y, z)) return
+    const total = LOOT.table.reduce((s, r) => s + r[2], 0)
+    const got = []
+    for (let i = 0; i < LOOT.rolls; i += 1) {
+      let pick = this.random() * total
+      const row = LOOT.table.find((r) => (pick -= r[2]) < 0) || LOOT.table[0]
+      const n = this.give(ent, row[0], row[1])
+      if (n) got.push([row[0], n])
+    }
+    chest.refillAt = this.now() + LOOT.refillMs
+    this.setBlock(arena, x, y, z, B.AIR, true)
+    if (ent.cid) this.sendTo(ent.cid, 'looted', { items: got })
+    this.toArena(arena, 'chestOpen', { x: x + 0.5, y: y + 0.5, z: z + 0.5 })
+  }
+
+  /** Opened chests fill up again (when nobody stands in the way). */
+  tickChests(arena, now) {
+    for (const c of arena.chests || []) {
+      if (!c.refillAt || now < c.refillAt) continue
+      const here = arena.world.get(c.x, c.y, c.z)
+      if (here !== B.AIR && BLOCKS[here]?.render !== 'cross') continue
+      if ([...this.ents.values()].some((e) => e.arena === arena.key && e.alive && cellOverlapsBody(c.x, c.y, c.z, e.x, e.y, e.z))) continue
+      c.refillAt = 0
+      this.setBlock(arena, c.x, c.y, c.z, B.LOOT_CHEST, true)
+    }
+  }
+
+  // --- Inventory: picking up, crafting ------------------------------------------------------
+
+  /** Puts `n` of `id` in the inventory (topping up stacks, then empty slots). Returns how many fit. */
+  give(ent, id, n) {
+    const max = ITEMS[id]?.stack || 1
+    const inv = ent.inv
+    let left = n
+    for (let i = 0; i <= OFFHAND && left > 0; i += 1) {
+      const s = inv[i]
+      if (s && s.id === id && s.n < max) {
+        const k = Math.min(left, max - s.n)
+        s.n += k
+        left -= k
       }
     }
-    const fx = ent.effects
-    if (fx.burn > now && now - ent.lastBurnAt >= 1000) {
-      ent.lastBurnAt = now
-      this.damage(ent, 1, fx.burnBy || null, 'burn')
-      if (!ent.alive) return
+    for (let i = 0; i < OFFHAND && left > 0; i += 1) {
+      if (inv[i]) continue
+      const k = Math.min(left, max)
+      inv[i] = { id, n: k }
+      left -= k
     }
-    // Healing: a regen effect, or slowly on your own once you've been out of a fight.
+    if (left < n) ent.dirty = true
+    return n - left
+  }
+
+  /** How many of `id` the inventory holds. */
+  count(ent, id) {
+    let n = 0
+    for (const s of ent.inv) if (s?.id === id) n += s.n
+    return n
+  }
+
+  /** Takes `n` of `id` from anywhere, the bag first so the hotbar stays as it is. */
+  takeItem(ent, id, n) {
+    let left = n
+    for (let i = ent.inv.length - 1; i >= 0 && left > 0; i -= 1) {
+      const s = ent.inv[i]
+      if (s?.id !== id) continue
+      const k = Math.min(left, s.n)
+      this.take(ent, i, k)
+      left -= k
+    }
+  }
+
+  /** Is there a crafting table within TABLE_REACH of `ent`? */
+  nearTable(ent) {
+    const w = this.arenas.get(ent.arena)?.world
+    if (!w) return false
+    const x0 = Math.floor(ent.x)
+    const y0 = Math.floor(ent.y)
+    const z0 = Math.floor(ent.z)
+    for (let dy = -2; dy <= 3; dy += 1) {
+      for (let dx = -TABLE_REACH; dx <= TABLE_REACH; dx += 1) {
+        for (let dz = -TABLE_REACH; dz <= TABLE_REACH; dz += 1) if (w.get(x0 + dx, y0 + dy, z0 + dz) === B.CRAFTING_TABLE) return true
+      }
+    }
+    return false
+  }
+
+  craft(ent, id) {
+    if (ent.zone !== 'match' || !ent.alive) return
+    const r = RECIPES.find((x) => x.id === id)
+    if (!r || !r.need.every(([item, n]) => this.count(ent, item) >= n)) return
+    const say = (text) => ent.cid && this.sendTo(ent.cid, 'toast', { text, kind: 'error' })
+    if (r.table && !this.nearTable(ent)) return say('Stand by a crafting table')
+    // Armour: a whole set, only ever better; or mended back to full.
+    if (r.armor || r.repair) {
+      const tier = ent.armor?.tier || 'none'
+      if (r.armor && ARMOR_RANK[r.armor] <= ARMOR_RANK[tier]) return say('Your armour is already as good')
+      if (r.repair && (tier === 'none' || ent.armor.dura.every((d, i) => d >= ARMOR[tier].dura[i]))) return say('Nothing to repair')
+      for (const [item, n] of r.need) this.takeItem(ent, item, n)
+      const next = r.armor || tier
+      ent.armor = { tier: next, dura: [...ARMOR[next].dura] }
+      ent.dirty = true
+      this.rosterDirty = true
+      if (ent.cid) this.sendTo(ent.cid, 'crafted', { id: r.id, n: 1, name: r.name })
+      return
+    }
+    for (const [item, n] of r.need) this.takeItem(ent, item, n)
+    const got = this.give(ent, r.out[0], r.out[1])
+    // No room for it after all: everything goes back.
+    if (!got) {
+      for (const [item, n] of r.need) this.give(ent, item, n)
+      return
+    }
+    ent.dirty = true
+    if (ent.cid) this.sendTo(ent.cid, 'crafted', { id: r.out[0], n: got })
+  }
+
+  tickStatus(arena, ent, now) {
+    if (!ent.alive) return
+    const w = arena.world
+    if (ent.y < -12 || ent.x < -16 || ent.z < -16 || ent.x > w.sx + 16 || ent.z > w.sz + 16) {
+      this.damage(ent, 999, ent.lastHitBy && now - ent.lastHitBy.at < 10000 ? ent.lastHitBy.eid : null, 'void', { pierce: true, iframes: false })
+      return
+    }
+    const fx = ent.effects
+    const kit = MODES[ent.kit]
+    // Healing: the regeneration effect, or slowly on your own (kits that allow it).
     const regen = fx.regen > now
-    const interval = regen ? 600 : NATURAL_REGEN_MS
-    if (ent.hp < ent.maxHp && (regen || now - ent.lastHurtAt > REGEN_DELAY_MS) && now - ent.lastRegenAt >= interval) {
+    const interval = regen ? 1000 : COMBAT.regenMs
+    if (ent.hp < ent.maxHp && (regen || (kit?.regen && now - ent.lastHurtAt > COMBAT.regenDelayMs)) && now - ent.lastRegenAt >= interval) {
       ent.lastRegenAt = now
       ent.hp = Math.min(ent.maxHp, ent.hp + 1)
       ent.dirty = true
     }
+    // Fire: standing in flames sets you alight; water puts you out; burning hurts.
+    const fx0 = Math.floor(ent.x)
+    const fz0 = Math.floor(ent.z)
+    const burns = (id) => id === B.FIRE || id === B.CAMPFIRE
+    const flame = burns(w.get(fx0, Math.floor(ent.y + 0.2), fz0)) || burns(w.get(fx0, Math.floor(ent.y + 1.1), fz0))
+    // Beside (not in) a campfire: its warmth heals, slowly.
+    if (!flame && arena.campfires?.size && ent.hp < ent.maxHp && now - (ent.lastWarmAt || 0) >= CAMPFIRE.everyMs) {
+      for (const key of arena.campfires) {
+        const [cx, cy, cz] = unpackKey(key)
+        if (Math.hypot(cx + 0.5 - ent.x, cy - ent.y, cz + 0.5 - ent.z) > CAMPFIRE.radius) continue
+        ent.lastWarmAt = now
+        ent.hp = Math.min(ent.maxHp, ent.hp + CAMPFIRE.heal)
+        ent.dirty = true
+        break
+      }
+    }
+    if (flame) {
+      if (!(fx.burn > now)) ent.dirty = true
+      fx.burn = now + FIRE.burnMs
+      const by = arena.fireBy?.get(blockKey(fx0, Math.floor(ent.y + 0.2), fz0))
+      if (by && by !== ent.eid) ent.burnBy = by
+    }
+    // Breath: head under water uses it up, then you drown; out of the water it comes back.
+    const step = Math.min(250, now - (ent.airAt || now))
+    ent.airAt = now
+    if (ent.air === undefined) ent.air = AIR.ms
+    if (isWater(w.get(fx0, Math.floor(ent.y + PLAYER.eye), fz0))) {
+      ent.air = Math.max(0, ent.air - step)
+      if (ent.air <= 0 && now - (ent.lastDrownAt || 0) >= AIR.tickMs) {
+        ent.lastDrownAt = now
+        const by = ent.lastHitBy && now - ent.lastHitBy.at < 10000 ? ent.lastHitBy.eid : null
+        this.damage(ent, AIR.dmg, by, 'drown', { pierce: true, iframes: false })
+        if (!ent.alive) return
+      }
+    } else if (ent.air < AIR.ms) ent.air = Math.min(AIR.ms, ent.air + step * AIR.refill)
+    const bubbles = Math.ceil((ent.air / AIR.ms) * AIR.bubbles)
+    if (bubbles !== ent.airBubbles) {
+      ent.airBubbles = bubbles
+      ent.dirty = true
+    }
+    if (fx.burn > now) {
+      if (inWater(w, ent.x, ent.y, ent.z)) this.extinguish(ent)
+      else if (now - (ent.lastBurnAt || 0) >= FIRE.tickMs) {
+        ent.lastBurnAt = now
+        this.damage(ent, FIRE.dmg, ent.burnBy || null, 'fire', { pierce: true, iframes: false })
+        if (!ent.alive) return
+      }
+    }
     for (const k of Object.keys(fx)) {
-      if (k !== 'burnBy' && fx[k] && fx[k] <= now) {
+      if (fx[k] && fx[k] <= now) {
         delete fx[k]
         ent.dirty = true
       }
     }
+  }
+
+  /** Not burning any more. */
+  extinguish(ent) {
+    if (!ent.effects.burn) return
+    delete ent.effects.burn
+    ent.burnBy = null
+    ent.dirty = true
   }
 
   eye(ent) {
@@ -1000,242 +1339,335 @@ export class GameHost {
     return Math.hypot(x + 0.5 - e.x, y + 0.5 - e.y, z + 0.5 - e.z) <= reach + 0.9
   }
 
-  canAct(ent) {
-    return this.match && ent.zone === 'match' && ent.alive && this.phase === 'fight'
+  /** The arena `ent` fights in, if it can act there right now. */
+  actArena(ent) {
+    if (ent.zone !== 'match' || !ent.alive) return null
+    const arena = this.arenas.get(ent.arena)
+    return arena && arena.world && arena.phase === 'fight' ? arena : null
   }
+
+  // --- Blocks -------------------------------------------------------------------------------
 
   onBreak(ent, x, y, z) {
-    const m = this.match
-    if (!this.canAct(ent)) return this.reject(ent, x, y, z)
-    const id = m.world.get(x, y, z)
+    const arena = this.actArena(ent)
+    if (!arena) return this.reject(ent, x, y, z)
+    const id = arena.world.get(x, y, z)
     const def = BLOCKS[id]
+    const key = blockKey(x, y, z)
     if (!def || id === B.AIR || !Number.isFinite(def.hard) || !this.inReach(ent, x, y, z)) return this.reject(ent, x, y, z)
-    const need = breakSeconds(def.hard, this.heldItem(ent)) * 1000
+    if (arena.protect && !arena.placed.has(key)) return this.reject(ent, x, y, z)
+    const need = breakSeconds(def.hard, mineSpeed(this.heldItem(ent), def.hard)) * 1000
     const dig = ent.dig
-    if (need > 60 && (!dig || dig.key !== blockKey(x, y, z) || this.now() - dig.at < need * 0.7 - 150)) return this.reject(ent, x, y, z)
+    if (need > 60 && (!dig || dig.key !== key || this.now() - dig.at < need * 0.7 - 150)) return this.reject(ent, x, y, z)
     ent.dig = null
-    this.breakBlock(ent, x, y, z)
+    this.breakBlock(arena, ent, x, y, z)
   }
 
-  /** Breaks a block for `ent` (already checked) and hands out what it gives. */
-  breakBlock(ent, x, y, z) {
-    const m = this.match
-    const id = m.world.get(x, y, z)
-    const def = BLOCKS[id]
-    this.setBlock(x, y, z, B.AIR)
-    // A flower on top goes with it.
-    if (BLOCKS[m.world.get(x, y + 1, z)]?.render === 'cross') this.setBlock(x, y + 1, z, B.AIR)
-    if (isLucky(id)) {
-      this.openLucky(ent, x, y, z, def.lucky === 2)
+  /** Breaks a block for `ent` (already checked): crystals explode. */
+  breakBlock(arena, ent, x, y, z) {
+    const id = arena.world.get(x, y, z)
+    // Flames just go out (and don't grow back with the world).
+    this.setBlock(arena, x, y, z, B.AIR, id === B.FIRE)
+    if (BLOCKS[arena.world.get(x, y + 1, z)]?.render === 'cross') this.setBlock(arena, x, y + 1, z, B.AIR, arena.world.get(x, y + 1, z) === B.FIRE)
+    if (isCrystal(id)) {
+      this.explode(arena, x + 0.5, y + 0.5, z + 0.5, ent.eid)
       return
     }
-    if (id === B.TNT) {
-      this.primeTnt(x, y, z, ent.eid, 600)
-      return
-    }
-    if (def.drop) {
-      this.give(ent, def.drop, 1)
-      ent.dirty = true
-    }
+    // What you mine goes into your inventory.
+    const drop = BLOCKS[id]?.drop
+    if (ent && ITEMS[drop] && this.give(ent, drop, 1) && ent.cid) this.sendTo(ent.cid, 'pickup', { id: drop })
   }
 
-  openLucky(ent, x, y, z, rare) {
-    const mode = MODES[this.match.mode]
-    ent.lucky = (ent.lucky || 0) + 1
-    this.match.stats.lucky += 1
-    const got = []
-    let text = ''
-    let bad = null
-    for (let r = 0; r < mode.rolls; r += 1) {
-      const entry = rollLucky(this.random, rare)
-      if (!text) text = entry.text
-      if (entry.bad) {
-        bad = entry.bad
-        this.unlucky(ent, entry.bad, x, y, z)
-      } else {
-        for (const [item, n] of entry.give) {
-          this.give(ent, item, n)
-          got.push([item, n])
-        }
-      }
-    }
-    this.give(ent, 'wool', LUCKY_BONUS_BLOCKS)
-    got.push(['wool', LUCKY_BONUS_BLOCKS])
+  onPlace(ent, x, y, z, hand) {
+    const arena = this.actArena(ent)
+    if (!arena) return this.reject(ent, x, y, z)
+    const index = hand === 'off' ? OFFHAND : ent.sel
+    const slot = ent.inv[index]
+    const item = slot && ITEMS[slot.id]
+    const water = item?.kind === 'bucket' && item.fill === 'water'
+    if (!item || (item.kind !== 'block' && item.kind !== 'crystal' && !water) || !this.inReach(ent, x, y, z)) return this.reject(ent, x, y, z)
+    if (!(water ? this.pourWater(arena, ent, x, y, z, index) : this.placeBlock(arena, ent, x, y, z, index))) this.reject(ent, x, y, z)
+  }
+
+  /** A water bucket poured into cell (x, y, z) (it may be where you stand: that's the point). */
+  pourWater(arena, ent, x, y, z, index) {
+    if (!this.canPlaceAt(arena, x, y, z, false, true)) return false
+    ent.inv[index] = { id: 'bucket', n: 1 }
     ent.dirty = true
-    if (ent.cid) this.sendTo(ent.cid, 'loot', { x, y, z, text, items: got, rare, bad })
-    this.toMatchViewers('pop', { x, y, z, rare, bad: Boolean(bad) })
-  }
-
-  unlucky(ent, kind, x, y, z) {
-    if (kind === 'tnt') {
-      this.toMatchViewers('tnt', { x, y, z, fuse: 1700 })
-      this.match.tnts.push({ x: x + 0.5, y: y + 0.5, z: z + 0.5, at: this.now() + 1700, owner: null })
-    } else if (kind === 'lightning') {
-      this.toMatchViewers('bolt', { x: ent.x, y: ent.y, z: ent.z })
-      this.damage(ent, 5, null, 'lightning')
-      if (ent.alive) {
-        ent.effects.burn = this.now() + 2000
-      }
-    } else if (kind === 'launch') {
-      const a = this.random() * Math.PI * 2
-      this.knock(ent, Math.cos(a) * 3, 15, Math.sin(a) * 3)
-    }
-  }
-
-  onPlace(ent, x, y, z) {
-    if (!this.canAct(ent)) return this.reject(ent, x, y, z)
-    const slot = ent.inv[ent.sel]
-    const item = slot && ITEMS[slot.id]
-    if (!item || (item.kind !== 'block' && item.kind !== 'tnt') || !this.inReach(ent, x, y, z)) return this.reject(ent, x, y, z)
-    if (!this.placeBlock(ent, x, y, z)) this.reject(ent, x, y, z)
-  }
-
-  /** Can a block go in cell (x, y, z)? */
-  canPlaceAt(x, y, z) {
-    const w = this.match.world
-    if (x < 0 || z < 0 || y < 1 || x >= w.sx || z >= w.sz || y >= w.sy - 1) return false
-    const here = w.get(x, y, z)
-    if (here !== B.AIR && BLOCKS[here].render !== 'cross') return false
-    const touching =
-      w.isSolid(x + 1, y, z) || w.isSolid(x - 1, y, z) || w.isSolid(x, y + 1, z) || w.isSolid(x, y - 1, z) || w.isSolid(x, y, z + 1) || w.isSolid(x, y, z - 1)
-    if (!touching) return false
-    for (const e of this.ents.values()) {
-      if (e.zone === 'match' && e.alive && cellOverlapsBody(x, y, z, e.x, e.y, e.z, PLAYER.halfW - 0.05, PLAYER.height - 0.05)) return false
-    }
-    return true
-  }
-
-  placeBlock(ent, x, y, z) {
-    const slot = ent.inv[ent.sel]
-    const item = slot && ITEMS[slot.id]
-    if (!item || !this.canPlaceAt(x, y, z)) return false
-    this.take(ent, ent.sel, 1)
-    if (item.kind === 'tnt') {
-      this.setBlock(x, y, z, B.TNT)
-      this.primeTnt(x, y, z, ent.eid, TNT.fuseMs)
-    } else {
-      this.setBlock(x, y, z, item.block)
-    }
-    ent.placed = (ent.placed || 0) + 1
-    this.match.stats.placed += 1
-    // Others see your arm swing as you build.
+    this.setBlock(arena, x, y, z, B.WATER)
+    arena.placed.add(blockKey(x, y, z))
+    this.douse(arena, x + 0.5, y + 0.5, z + 0.5)
     this.toWatchers(ent, 'swing', { eid: ent.eid })
     return true
   }
 
-  primeTnt(x, y, z, owner, fuse) {
-    const m = this.match
-    if (m.tnts.some((t) => Math.floor(t.x) === x && Math.floor(t.y) === y && Math.floor(t.z) === z)) return
-    m.tnts.push({ x: x + 0.5, y: y + 0.5, z: z + 0.5, at: this.now() + fuse, owner })
-    this.toMatchViewers('tnt', { x, y, z, fuse })
+  /**
+   * Right click with a bucket: an empty one fills from the water you point at (water you
+   * poured is taken back; the sea and lakes never run dry); a full one with nowhere to
+   * pour is tipped over yourself - out goes the fire.
+   */
+  useBucket(ent, index, p) {
+    const arena = this.actArena(ent)
+    const item = ITEMS[ent.inv[index]?.id]
+    if (!arena || item?.kind !== 'bucket') return
+    if (item.fill === 'water') {
+      ent.inv[index] = { id: 'bucket', n: 1 }
+      ent.dirty = true
+      this.douse(arena, ent.x, ent.y + 0.9, ent.z)
+      return
+    }
+    const x = Math.floor(num(p.x, NaN))
+    const y = Math.floor(num(p.y, NaN))
+    const z = Math.floor(num(p.z, NaN))
+    if (!Number.isFinite(x + y + z) || arena.world.get(x, y, z) !== B.WATER || !this.inReach(ent, x, y, z)) return
+    const key = blockKey(x, y, z)
+    if (arena.placed.has(key)) this.setBlock(arena, x, y, z, B.AIR)
+    ent.inv[index] = { id: 'water_bucket', n: 1 }
+    ent.dirty = true
+    this.toWatchers(ent, 'swing', { eid: ent.eid })
   }
 
-  explode(cx, cy, cz, owner) {
-    const m = this.match
-    const r = TNT.radius
+  /**
+   * Swaps two inventory slots (0-8 hotbar, 9-35 bag, 36 offhand): the inventory screen
+   * and the swap-hands key. The same item in both stacks up instead.
+   */
+  swapSlots(ent, a, b) {
+    if (ent.zone !== 'match' || !ent.alive || a === b) return
+    if (!(a >= 0 && a < INV_SIZE && b >= 0 && b < INV_SIZE)) return
+    const inv = ent.inv
+    const A = inv[a]
+    const B = inv[b]
+    const max = A && ITEMS[A.id]?.stack
+    if (A && B && A.id === B.id && max > 1 && B.n < max) {
+      const move = Math.min(A.n, max - B.n)
+      B.n += move
+      A.n -= move
+      if (A.n <= 0) inv[a] = null
+    } else {
+      inv[a] = B
+      inv[b] = A
+    }
+    // The shield left your hands: it's down.
+    if (ent.blocking && !hasShield(ent)) ent.blocking = false
+    ent.dirty = true
+  }
+
+  /** Can a block go in cell (x, y, z) of `arena`? Crystals only sit on obsidian or corestone. */
+  canPlaceAt(arena, x, y, z, crystal = false, liquid = false) {
+    const w = arena.world
+    if (x < 0 || z < 0 || y < 1 || x >= w.sx || z >= w.sz || y >= w.sy - 1) return false
+    if (arena.kind === 'duel' && y > ARENA_FLOOR + ARENA_BUILD_HEIGHT) return false
+    const here = w.get(x, y, z)
+    if (here !== B.AIR && BLOCKS[here].render !== 'cross' && !isWater(here)) return false
+    if (crystal) {
+      const below = w.get(x, y - 1, z)
+      if (below !== B.OBSIDIAN && below !== B.CORESTONE) return false
+    }
+    const touching =
+      w.isSolid(x + 1, y, z) || w.isSolid(x - 1, y, z) || w.isSolid(x, y + 1, z) || w.isSolid(x, y - 1, z) || w.isSolid(x, y, z + 1) || w.isSolid(x, y, z - 1)
+    if (!touching) return false
+    if (liquid) return true
+    for (const e of this.ents.values()) {
+      if (e.arena === arena.key && e.zone === 'match' && e.alive && cellOverlapsBody(x, y, z, e.x, e.y, e.z, PLAYER.halfW - 0.05, PLAYER.height - 0.05)) return false
+    }
+    return true
+  }
+
+  placeBlock(arena, ent, x, y, z, index = ent.sel) {
+    const slot = ent.inv[index]
+    const item = slot && ITEMS[slot.id]
+    if (!item) return false
+    const crystal = item.kind === 'crystal'
+    if (!this.canPlaceAt(arena, x, y, z, crystal)) return false
+    this.take(ent, index, 1)
+    this.setBlock(arena, x, y, z, crystal ? B.CRYSTAL : item.block)
+    arena.placed.add(blockKey(x, y, z))
+    this.toWatchers(ent, 'swing', { eid: ent.eid })
+    return true
+  }
+
+  /** A blast: blocks broken (never the arena's own, nor obsidian), people hurt and thrown. */
+  explode(arena, cx, cy, cz, owner, spec = CRYSTAL) {
+    const r = spec.radius
     const R = Math.ceil(r)
+    const w = arena.world
     for (let x = Math.floor(cx) - R; x <= Math.floor(cx) + R; x += 1) {
       for (let y = Math.floor(cy) - R; y <= Math.floor(cy) + R; y += 1) {
         for (let z = Math.floor(cz) - R; z <= Math.floor(cz) + R; z += 1) {
           const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy, z + 0.5 - cz)
-          if (d > r + (this.random() - 0.5) * 0.8) continue
-          const id = m.world.get(x, y, z)
+          if (d > r * 0.75 + (this.random() - 0.5) * 0.8) continue
+          const id = w.get(x, y, z)
           if (id === B.AIR) continue
-          const def = BLOCKS[id]
-          if (!Number.isFinite(def.hard) || def.hard >= 2.4) continue
-          if (id === B.TNT && !(Math.floor(cx) === x && Math.floor(cy) === y && Math.floor(cz) === z)) {
-            this.primeTnt(x, y, z, owner, 350 + this.random() * 300)
+          const key = blockKey(x, y, z)
+          if (arena.protect && !arena.placed.has(key)) continue
+          if (isCrystal(id)) {
+            // Chain: the crystal next door goes too, a moment later.
+            this.setBlock(arena, x, y, z, B.AIR)
+            arena.chain = arena.chain || []
+            arena.chain.push({ x: x + 0.5, y: y + 0.5, z: z + 0.5, owner })
             continue
           }
-          this.setBlock(x, y, z, B.AIR)
+          const def = BLOCKS[id]
+          if (!Number.isFinite(def.hard) || def.hard >= 2.4 || isWater(id)) continue
+          this.setBlock(arena, x, y, z, B.AIR)
         }
       }
     }
-    this.toMatchViewers('boom', { x: cx, y: cy, z: cz, r })
+    this.toArena(arena, 'boom', { x: cx, y: cy, z: cz, r })
     for (const e of this.ents.values()) {
-      if (e.zone !== 'match' || !e.alive) continue
+      if (e.arena !== arena.key || e.zone !== 'match' || !e.alive) continue
       const dx = e.x - cx
       const dy = e.y + 0.9 - cy
       const dz = e.z - cz
       const d = Math.hypot(dx, dy, dz)
       if (d > r + 1.5) continue
-      const f = 1 - d / (r + 1.5)
+      // Cover between you and the blast takes most of it.
+      const seen = !raycastVoxels(w, cx, cy, cz, dx, dy, dz, Math.max(0.1, d - 0.6), isSolidBlock)
+      const f = (1 - d / (r + 1.5)) * (seen ? 1 : 0.25)
       const len = Math.hypot(dx, dz) || 1
-      this.damage(e, Math.max(1, Math.round(TNT.damage * f)), owner, 'tnt', (dx / len) * TNT.knock * f, (dz / len) * TNT.knock * f, 6 + 6 * f)
+      this.damage(e, Math.max(1, spec.damage * f), owner, 'boom', {
+        kx: (dx / len) * spec.knock * f,
+        kz: (dz / len) * spec.knock * f,
+        ky: 5 + 6 * f,
+        from: { x: cx, z: cz },
+      })
     }
+    const chain = arena.chain
+    arena.chain = null
+    if (chain) for (const c of chain.slice(0, 6)) this.explode(arena, c.x, c.y, c.z, c.owner, spec)
   }
 
+  // --- Melee ----------------------------------------------------------------------------------
+
   onAttack(ent, targetEid) {
-    if (!this.canAct(ent)) return
+    const arena = this.actArena(ent)
+    if (!arena) return
     const target = this.ents.get(targetEid)
-    if (!target || target === ent || target.zone !== 'match' || !target.alive || target.team === ent.team) return
+    if (!target || target === ent || target.arena !== ent.arena || target.zone !== 'match' || !target.alive) return
+    const item = ITEMS[this.heldItem(ent)] || ITEMS.fist
     const now = this.now()
-    if (now - ent.lastAttackAt < ATTACK_COOLDOWN_MS * 0.8) return
+    const cd = MELEE_KINDS.has(item.kind) ? item.cd : 250
+    if (now - ent.lastAttackAt < Math.max(60, cd * 0.8)) return
     const e = this.eye(ent)
-    // Distance from your eye to the nearest point of their box.
     const nx = clamp(e.x, target.x - PLAYER.halfW, target.x + PLAYER.halfW)
     const ny = clamp(e.y, target.y, target.y + PLAYER.height)
     const nz = clamp(e.z, target.z - PLAYER.halfW, target.z + PLAYER.halfW)
-    if (Math.hypot(nx - e.x, ny - e.y, nz - e.z) > MELEE_REACH + REACH_SLACK) return
-    this.melee(ent, target)
+    if (Math.hypot(nx - e.x, ny - e.y, nz - e.z) > (item.reach || COMBAT.reach) + REACH_SLACK) return
+    this.melee(arena, ent, target)
   }
 
-  melee(ent, target) {
+  /** A melee hit from `ent` on `target`: crits, mace smashes, lunges, shields and all. */
+  melee(arena, ent, target) {
     const now = this.now()
     ent.lastAttackAt = now
     const item = ITEMS[this.heldItem(ent)] || ITEMS.fist
-    let dmg = item.kind === 'sword' || item.kind === 'tool' ? item.dmg : 1
+    const kind = MELEE_KINDS.has(item.kind) ? item.kind : 'none'
+    let dmg = kind === 'none' ? 1 : item.dmg
     if (ent.effects.strength > now) dmg += EFFECTS.strength.dmgAdd
-    if (ent.bot) dmg = Math.max(1, Math.round(dmg * (BOT_LEVELS[this.match.botLevel]?.damage ?? 0.8)))
+    const falling = ent.bot ? ent.body && !ent.body.onGround && ent.body.vy < -0.5 : ent.anim === 4 && ent.falling
+    const crit = falling && kind !== 'mace'
+    if (crit) dmg *= COMBAT.critMul
+    let smash = 0
+    if (kind === 'mace') {
+      const fall = Math.max(0, (ent.wasAir || (ent.bot && !ent.body?.onGround) ? ent.peakY : ent.y) - ent.y)
+      if (fall > 1.5) {
+        smash = Math.min(COMBAT.maceCap, Math.min(fall, 3) * COMBAT.maceFirst + Math.max(0, fall - 3) * COMBAT.maceAfter)
+        dmg += smash
+      }
+    }
+    if (kind === 'spear' && now < ent.lungeUntil) {
+      dmg += COMBAT.lungeBonus
+      ent.lungeUntil = 0
+    }
+    if (ent.bot) dmg = Math.max(1, dmg * (BOT_LEVELS[arena.botLevel]?.damage ?? 0.85))
     const dx = target.x - ent.x
     const dz = target.z - ent.z
     const len = Math.hypot(dx, dz) || 1
-    const sprintBonus = ent.anim === 2 ? 1.4 : 1
-    if (item.burn) {
-      target.effects.burn = now + item.burn * 1000
-      target.effects.burnBy = ent.eid
+    const boost = ent.anim === 2 ? COMBAT.sprintKnock : 1
+    const k = COMBAT.knock * boost * (smash ? 1.3 : 1)
+    this.toWatchers(ent, 'swing', { eid: ent.eid })
+    const dealt = this.damage(target, dmg, ent.eid, 'melee', {
+      kx: (dx / len) * k,
+      kz: (dz / len) * k,
+      ky: COMBAT.knockUp + (smash ? 3 : 0),
+      from: { x: ent.x, z: ent.z },
+      axe: kind === 'axe',
+      crit,
+    })
+    if (smash) {
+      // The mace lands: you bounce (no fall damage), everyone near is thrown.
+      ent.peakY = ent.y
+      ent.wasAir = false
+      ent.noFallUntil = now + 1500
+      this.knock(ent, 0, 7, 0)
+      this.toArena(arena, 'smash', { x: target.x, y: target.y, z: target.z, big: smash > 10 })
+      for (const o of this.ents.values()) {
+        if (o === ent || o === target || o.arena !== arena.key || !o.alive || o.zone !== 'match') continue
+        const ox = o.x - target.x
+        const oz = o.z - target.z
+        const d = Math.hypot(ox, oz)
+        if (d > 3.5) continue
+        this.knock(o, (ox / (d || 1)) * 7, 5, (oz / (d || 1)) * 7)
+      }
     }
-    this.toZone('match', 'swing', { eid: ent.eid }, ent.cid)
-    this.damage(target, dmg, ent.eid, 'melee', (dx / len) * 6.5 * sprintBonus, (dz / len) * 6.5 * sprintBonus, 6.2)
+    return dealt
   }
+
+  /** Holding a shield up (right click with a shield in your hotbar). */
+  setBlocking(ent, on) {
+    const now = this.now()
+    const can = on && ent.zone === 'match' && ent.alive && hasShield(ent) && now >= ent.shieldOffUntil
+    if (can === ent.blocking) return
+    ent.blocking = can
+    ent.blockAt = now
+  }
+
+  // --- Using items ---------------------------------------------------------------------------
 
   onUse(ent, p) {
-    if (!this.canAct(ent)) return
-    const slot = ent.inv[ent.sel]
-    if (!slot) return
-    const dir = Array.isArray(p.dir) ? p.dir.map((v) => num(v)) : [-Math.sin(ent.yaw), 0, -Math.cos(ent.yaw)]
-    this.useItem(ent, ent.sel, dir, clamp(num(p.charge, 1), 0, 1))
+    if (!this.actArena(ent)) return
+    const index = p.hand === 'off' ? OFFHAND : ent.sel
+    if (!ent.inv[index]) return
+    if (ITEMS[ent.inv[index].id]?.kind === 'bucket') return this.useBucket(ent, index, p)
+    const dir = Array.isArray(p.dir) ? p.dir.slice(0, 3).map((v) => num(v)) : [-Math.sin(ent.yaw), 0, -Math.cos(ent.yaw)]
+    this.useItem(ent, index, dir, clamp(num(p.charge, 1), 0, 1))
   }
 
-  /** Uses the item in `slot`: eat, drink, shoot, throw. Returns true if something happened. */
+  /** Uses the item in `slot`: eat, drink, shoot, throw, lunge. Returns true if something happened. */
   useItem(ent, slotIndex, dir, charge = 1) {
+    const arena = this.actArena(ent)
+    if (!arena) return false
     const now = this.now()
     const slot = ent.inv[slotIndex]
     const item = slot && ITEMS[slot.id]
     if (!item) return false
-    const gap = item.kind === 'bow' ? 320 : 220
+    if (item.kind === 'spear') return this.lunge(ent, item, dir)
+    const gap = USE_GAP[item.kind] ?? 220
     if (now - ent.lastUseAt < gap) return false
     ent.lastUseAt = now
     switch (item.kind) {
       case 'food':
-        ent.hp = Math.min(ent.maxHp, ent.hp + item.heal)
+        ent.hp = Math.min(ent.maxHp, ent.hp + (item.heal || 0))
+        if (item.absorb) ent.absorb = Math.max(ent.absorb, item.absorb)
         if (item.regen) ent.effects.regen = now + item.regen * 1000
+        if (item.effect) {
+          ent.effects[item.effect] = now + item.dur * 1000
+          // Leaping: no fall damage until you've had time to land after it wears off.
+          if (item.effect === 'leap') ent.noFallUntil = Math.max(ent.noFallUntil || 0, now + item.dur * 1000 + 4000)
+        }
         break
       case 'potion':
         if (item.heal) ent.hp = Math.min(ent.maxHp, ent.hp + item.heal)
         if (item.effect) ent.effects[item.effect] = now + item.dur * 1000
         break
-      case 'heart':
-        ent.maxHp = Math.min(40, ent.maxHp + item.maxHp)
-        ent.hp = Math.min(ent.maxHp, ent.hp + item.maxHp)
-        break
       case 'bow': {
         const c = Math.max(0.25, charge)
-        this.shoot(ent, 'arrow', dir, PROJECTILES.arrow.speed * (0.45 + 0.55 * c), Math.round(2 + (item.dmg - 2) * c), 4 * c)
+        this.shoot(arena, ent, 'arrow', dir, PROJECTILES.arrow.speed * (0.45 + 0.55 * c), Math.round(2 + (item.dmg - 2) * c), 3.5 * c, slot.id)
         break
       }
       case 'throw':
-        this.shoot(ent, slot.id === 'pearl' ? 'pearl' : 'snowball', dir, PROJECTILES[slot.id === 'pearl' ? 'pearl' : 'snowball'].speed, item.dmg, item.knock || 0)
+      case 'splash':
+        this.shoot(arena, ent, item.proj, dir, PROJECTILES[item.proj].speed, item.dmg || 0, 0, slot.id)
         break
       default:
         return false
@@ -1243,27 +1675,49 @@ export class GameHost {
     this.take(ent, slotIndex, 1)
     ent.dirty = true
     if (ent.cid) this.sendTo(ent.cid, 'used', { item: slot.id })
-    // Others see you eat, drink or throw.
     this.toWatchers(ent, 'act', { eid: ent.eid, kind: item.kind, item: slot.id })
     return true
   }
 
-  /** Sends to everyone who can see `ent` in the round (players and spectators), but not `ent`. */
+  /** Spear lunge: a dash the way you look; the next hit soon after is boosted. */
+  lunge(ent, item, dir) {
+    const now = this.now()
+    if (now - ent.lungeAt < item.lungeCd * 0.85) return false
+    ent.lungeAt = now
+    ent.lungeUntil = now + COMBAT.lungeHitMs
+    const len = Math.hypot(dir[0], dir[2]) || 1
+    const fx = (dir[0] / len) * COMBAT.lungeSpeed
+    const fz = (dir[2] / len) * COMBAT.lungeSpeed
+    if (ent.bot && ent.body) {
+      ent.body.pushX += fx
+      ent.body.pushZ += fz
+      ent.body.vy = Math.max(ent.body.vy, COMBAT.lungeLift)
+      ent.body.onGround = false
+    } else {
+      // The client already dashed: just let the move through.
+      ent.tpGrace = Math.max(ent.tpGrace, now + 900)
+      resetMoveState(ent.mv, ent.y, now)
+    }
+    this.toWatchers(ent, 'act', { eid: ent.eid, kind: 'lunge' })
+    return true
+  }
+
+  /** Sends to everyone who can see `ent` in its arena (fighters and spectators), but not `ent`. */
   toWatchers(ent, type, payload) {
-    this.toZone('match', type, payload, ent.cid)
-    this.toZone('spec', type, payload, ent.cid)
+    const arena = this.arenas.get(ent.arena)
+    if (arena) this.toArena(arena, type, payload, ent.cid)
   }
 
   // --- Projectiles ----------------------------------------------------------------------
 
-  shoot(ent, kind, dir, speed, dmg, knock) {
-    const m = this.match
-    if (m.projs.length > 64) return
+  shoot(arena, ent, kind, dir, speed, dmg, knock, item = null) {
+    if (arena.projs.length > 64) return
     const len = Math.hypot(dir[0], dir[1], dir[2]) || 1
     const e = this.eye(ent)
     const p = {
-      id: m.nextProj++,
+      id: arena.nextProj++,
       kind,
+      item,
       owner: ent.eid,
       x: e.x + (dir[0] / len) * 0.4,
       y: e.y - 0.1 + (dir[1] / len) * 0.4,
@@ -1274,28 +1728,29 @@ export class GameHost {
       age: 0,
       dmg,
       knock,
+      fire: Boolean(ITEMS[item]?.fire),
     }
-    m.projs.push(p)
-    this.toMatchViewers('proj', { id: p.id, kind, owner: p.owner, x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz })
+    arena.projs.push(p)
+    this.toArena(arena, 'proj', { id: p.id, kind, owner: p.owner, x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, fire: p.fire ? 1 : 0 })
   }
 
-  tickProjectiles(dt) {
-    const m = this.match
-    for (let i = m.projs.length - 1; i >= 0; i -= 1) {
-      const p = m.projs[i]
+  tickProjectiles(arena, dt) {
+    const w = arena.world
+    for (let i = arena.projs.length - 1; i >= 0; i -= 1) {
+      const p = arena.projs[i]
       const spec = PROJECTILES[p.kind]
       p.age += dt
       p.vy -= spec.gravity * dt
       const sx = p.vx * dt
       const sy = p.vy * dt
       const sz = p.vz * dt
-      const segLen = Math.hypot(sx, sy, sz)
+      const segLen = Math.hypot(sx, sy, sz) || 1e-6
       let best = null
-      const hit = raycastVoxels(m.world, p.x, p.y, p.z, sx, sy, sz, segLen, isSolidBlock)
+      const hit = raycastVoxels(w, p.x, p.y, p.z, sx, sy, sz, segLen, isSolidBlock)
       if (hit) best = { t: hit.dist, block: hit }
       const s = spec.size / 2
       for (const e of this.ents.values()) {
-        if (e.zone !== 'match' || !e.alive || e.eid === p.owner) continue
+        if (e.arena !== arena.key || e.zone !== 'match' || !e.alive || (e.eid === p.owner && p.age < 0.25)) continue
         const t = rayBox(
           p.x, p.y, p.z, sx / segLen, sy / segLen, sz / segLen,
           e.x - PLAYER.halfW - s, e.y - s, e.z - PLAYER.halfW - s,
@@ -1305,32 +1760,12 @@ export class GameHost {
       }
       if (best || p.age > spec.life || p.y < -10) {
         const t = best ? best.t : segLen
-        const hx = p.x + (sx / (segLen || 1)) * t
-        const hy = p.y + (sy / (segLen || 1)) * t
-        const hz = p.z + (sz / (segLen || 1)) * t
-        m.projs.splice(i, 1)
-        this.toMatchViewers('projEnd', { id: p.id, x: hx, y: hy, z: hz })
-        const owner = this.ents.get(p.owner)
-        if (best?.ent) {
-          const len = Math.hypot(p.vx, p.vz) || 1
-          const k = p.knock + 2.5
-          this.damage(best.ent, p.dmg, p.owner, p.kind, (p.vx / len) * k, (p.vz / len) * k, p.knock ? 5.5 : 3)
-        }
-        if (p.kind === 'pearl' && owner?.alive && owner.zone === 'match' && (best || p.age > spec.life)) {
-          let tx = hx
-          let ty = hy
-          let tz = hz
-          if (best?.block) {
-            const b = best.block
-            tx = b.x + 0.5 + b.nx * 0.8
-            tz = b.z + 0.5 + b.nz * 0.8
-            ty = b.ny === 1 ? b.y + 1 : b.ny === -1 ? b.y - 2 : b.y
-          }
-          if (best || ty > -5) {
-            this.teleport(owner, clamp(tx, 0.5, MATCH_SIZE.x - 0.5), ty, clamp(tz, 0.5, MATCH_SIZE.z - 0.5))
-            this.damage(owner, 2, null, 'pearl')
-          }
-        }
+        const hx = p.x + (sx / segLen) * t
+        const hy = p.y + (sy / segLen) * t
+        const hz = p.z + (sz / segLen) * t
+        arena.projs.splice(i, 1)
+        this.toArena(arena, 'projEnd', { id: p.id, x: hx, y: hy, z: hz })
+        this.projectileLands(arena, p, best, hx, hy, hz)
         continue
       }
       p.x += sx
@@ -1339,25 +1774,188 @@ export class GameHost {
     }
   }
 
+  projectileLands(arena, p, best, hx, hy, hz) {
+    const owner = this.ents.get(p.owner)
+    if (p.kind === 'arrow') {
+      if (best?.ent) {
+        const len = Math.hypot(p.vx, p.vz) || 1
+        const k = p.knock + 2.5
+        const dealt = this.damage(best.ent, p.dmg, p.owner, 'arrow', { kx: (p.vx / len) * k, kz: (p.vz / len) * k, ky: 3.5, from: { x: hx - p.vx, z: hz - p.vz } })
+        // A fire arrow sets whoever it hits alight (not through a raised shield).
+        if (p.fire && dealt && best.ent.alive && !inWater(arena.world, best.ent.x, best.ent.y, best.ent.z)) {
+          best.ent.effects.burn = this.now() + FIRE.burnMs
+          best.ent.burnBy = p.owner
+          best.ent.dirty = true
+        }
+      }
+      if (p.fire) {
+        // Where it stuck (just outside the block it hit), or at the feet of whoever it hit.
+        const b = best?.block
+        if (b) this.igniteAt(arena, b.x + 0.5 + b.nx * 0.6, b.y + (b.ny === 1 ? 1 : b.ny === -1 ? -1 : 0.1), b.z + 0.5 + b.nz * 0.6, p.owner)
+        else if (best?.ent) this.igniteAt(arena, best.ent.x, best.ent.y, best.ent.z, p.owner)
+      }
+      return
+    }
+    if (p.kind === 'pearl') {
+      if (!owner?.alive || owner.arena !== arena.key) return
+      let tx = hx
+      let ty = hy
+      let tz = hz
+      if (best?.block) {
+        const b = best.block
+        tx = b.x + 0.5 + b.nx * 0.8
+        tz = b.z + 0.5 + b.nz * 0.8
+        ty = b.ny === 1 ? b.y + 1 : b.ny === -1 ? b.y - 2 : b.y
+      }
+      if (best || ty > -5) {
+        this.teleport(owner, clamp(tx, 0.5, arena.world.sx - 0.5), ty, clamp(tz, 0.5, arena.world.sz - 0.5))
+        owner.peakY = ty
+        this.damage(owner, 2, null, 'pearl', { pierce: true, iframes: false })
+      }
+      return
+    }
+    if (p.kind === 'gust') {
+      if (best?.ent) this.damage(best.ent, 1, p.owner, 'gust', { from: { x: hx - p.vx, z: hz - p.vz } })
+      this.gustBurst(arena, hx, hy, hz, p.owner)
+      return
+    }
+    if (p.kind === 'splash') {
+      const item = ITEMS[p.item] || ITEMS.splash_heal
+      this.toArena(arena, 'splash', { x: hx, y: hy, z: hz, color: item.color || '#ff4f6d' })
+      for (const e of this.ents.values()) {
+        if (e.arena !== arena.key || e.zone !== 'match' || !e.alive) continue
+        const d = Math.hypot(e.x - hx, e.y + 0.9 - hy, e.z - hz)
+        if (d > SPLASH.radius + 0.6) continue
+        const heal = Math.round((item.heal || 0) * (1 - (d / (SPLASH.radius + 0.6)) * 0.5))
+        if (heal > 0) {
+          e.hp = Math.min(e.maxHp, e.hp + heal)
+          e.dirty = true
+        }
+      }
+    }
+  }
+
+  /** A gust charge bursts: everyone near is thrown away and up; whoever threw it, way up. */
+  gustBurst(arena, x, y, z, ownerEid) {
+    const now = this.now()
+    this.toArena(arena, 'gust', { x, y, z })
+    for (const e of this.ents.values()) {
+      if (e.arena !== arena.key || e.zone !== 'match' || !e.alive) continue
+      const dx = e.x - x
+      const dy = e.y + 0.9 - y
+      const dz = e.z - z
+      const d = Math.hypot(dx, dy, dz)
+      if (d > GUST.radius + 0.9) continue
+      const f = 1 - d / (GUST.radius + 0.9)
+      const len = Math.hypot(dx, dz) || 1
+      e.noFallUntil = now + 5000
+      if (e.eid === ownerEid) this.knock(e, (dx / len) * 2 * f, GUST.selfLift * (0.6 + 0.4 * f), (dz / len) * 2 * f)
+      else this.knock(e, (dx / len) * GUST.push * f, GUST.lift * (0.5 + 0.5 * f), (dz / len) * GUST.push * f)
+    }
+  }
+
   // --- Health ---------------------------------------------------------------------------
 
-  damage(target, amount, byEid, how, kx = 0, kz = 0, ky = 0) {
-    if (!target.alive || this.phase !== 'fight') return
-    // No friendly fire: teammates' swords, arrows and TNT don't hurt (or push) you.
-    const attacker = byEid ? this.ents.get(byEid) : null
-    if (attacker && attacker !== target && attacker.zone === 'match' && attacker.team === target.team) return
+  /**
+   * Hurts `target`. `o`: `{ kx, ky, kz }` knockback, `from: {x, z}` where it came from
+   * (shields block from the front), `pierce` (ignores armour), `iframes` (false: ignores
+   * and doesn't start the no-damage window), `axe` (knocks a shield down), `crit`.
+   * Returns the damage dealt.
+   */
+  damage(target, amount, byEid, how, o = {}) {
+    if (!target.alive) return 0
+    const arena = this.arenas.get(target.arena)
+    if (!arena || arena.phase !== 'fight') return 0
     const now = this.now()
-    target.hp -= amount
-    target.lastHurtAt = now
-    target.dirty = true
-    if (byEid && byEid !== target.eid) target.lastHitBy = { eid: byEid, at: now }
-    this.toZone('match', 'hurt', { eid: target.eid, by: byEid || 0, how, dmg: amount })
-    this.toZone('spec', 'hurt', { eid: target.eid, by: byEid || 0, how, dmg: amount })
-    if (kx || kz || ky) this.knock(target, kx, ky, kz)
-    if (target.hp <= 0) {
-      const killer = byEid || (target.lastHitBy && now - target.lastHitBy.at < 10000 ? target.lastHitBy.eid : null)
-      this.kill(target, killer, how)
+    const useIframes = o.iframes !== false
+    if (useIframes && now < target.hurtUntil) return 0
+    const attacker = byEid ? this.ents.get(byEid) : null
+
+    // The shield: from the front, it takes the whole hit.
+    if (o.from && target.blocking && now - target.blockAt >= COMBAT.shieldWindupMs && now >= target.shieldOffUntil && hasShield(target)) {
+      const fx = -Math.sin(target.yaw)
+      const fz = -Math.cos(target.yaw)
+      const sx = o.from.x - target.x
+      const sz = o.from.z - target.z
+      const sl = Math.hypot(sx, sz) || 1
+      if ((fx * sx + fz * sz) / sl > 0.1) {
+        if (o.axe) {
+          target.shieldOffUntil = now + COMBAT.shieldOffMs
+          target.blocking = false
+          target.dirty = true
+          this.toArena(arena, 'shieldOff', { eid: target.eid })
+        } else this.toArena(arena, 'blocked', { eid: target.eid, by: byEid || 0 })
+        if (o.kx || o.kz) this.knock(target, (o.kx || 0) * 0.35, 0, (o.kz || 0) * 0.35)
+        if (useIframes) target.hurtUntil = now + 200
+        return 0
+      }
     }
+
+    let dmg = amount
+    if (!o.pierce) {
+      const set = ARMOR[target.armor?.tier] || ARMOR.none
+      let points = 0
+      set.points.forEach((pt, i) => {
+        if (target.armor.dura[i] > 0) points += pt
+      })
+      dmg = armorReduce(amount, points, set.tough)
+      // Every piece wears down; a broken one stops protecting.
+      const wear = Math.max(1, Math.floor(amount / 4))
+      target.armor.dura = target.armor.dura.map((d, i) => {
+        if (d <= 0) return 0
+        const left = Math.max(0, d - wear)
+        if (left === 0 && target.cid) this.sendTo(target.cid, 'toast', { text: `Your ${['helmet', 'chestplate', 'leggings', 'boots'][i]} broke!`, kind: 'error' })
+        return left
+      })
+    }
+    dmg = round1(dmg)
+    const landed = dmg
+    if (target.absorb > 0) {
+      const soak = Math.min(target.absorb, dmg)
+      target.absorb = round1(target.absorb - soak)
+      dmg = round1(dmg - soak)
+    }
+    target.hp = round1(target.hp - dmg)
+    target.lastHurtAt = now
+    if (useIframes) target.hurtUntil = now + COMBAT.iframesMs
+    target.dirty = true
+    if (attacker && attacker !== target) {
+      target.lastHitBy = { eid: byEid, at: now }
+      const st = attacker.stats
+      st.hits += 1
+      st.dealt = round1(st.dealt + landed)
+      st.combo += 1
+      st.best = Math.max(st.best, st.combo)
+      attacker.dirty = true
+    }
+    target.stats.taken += 1
+    target.stats.dmgTaken = round1(target.stats.dmgTaken + landed)
+    target.stats.combo = 0
+    this.toArena(arena, 'hurt', { eid: target.eid, by: byEid || 0, how, dmg: landed, crit: Boolean(o.crit) })
+    if (o.kx || o.kz || o.ky) {
+      const res = (ARMOR[target.armor?.tier] || ARMOR.none).kbRes
+      this.knock(target, (o.kx || 0) * (1 - res), o.ky || 0, (o.kz || 0) * (1 - res))
+    }
+    if (target.hp <= 0) {
+      let charm = -1
+      if (how !== 'void') {
+        if (target.inv[OFFHAND]?.id === 'charm') charm = OFFHAND
+        else charm = target.inv.findIndex((s, i) => i < HOTBAR && s?.id === 'charm')
+      }
+      if (charm >= 0) {
+        // The revive charm: one heart, a shield of absorption, regeneration.
+        this.take(target, charm, 1)
+        target.hp = 2
+        target.absorb = Math.max(target.absorb, 4)
+        target.effects.regen = now + 8000
+        target.dirty = true
+        this.toArena(arena, 'charm', { eid: target.eid, x: target.x, y: target.y, z: target.z })
+      } else {
+        const killer = attacker && attacker !== target ? attacker : target.lastHitBy && now - target.lastHitBy.at < 10000 ? this.ents.get(target.lastHitBy.eid) : null
+        this.kill(arena, target, killer, how)
+      }
+    }
+    return dmg
   }
 
   knock(target, x, y, z) {
@@ -1368,97 +1966,77 @@ export class GameHost {
       target.body.onGround = false
     } else if (target.cid) {
       this.sendTo(target.cid, 'kb', { x, y, z })
-      target.tpGrace = Math.max(target.tpGrace, this.now() + 700)
+      target.tpGrace = Math.max(target.tpGrace, this.now() + 900)
     }
   }
 
-  kill(target, killerEid, how) {
+  kill(arena, target, killer, how) {
     if (!target.alive) return
     target.alive = false
     target.hp = 0
+    target.blocking = false
     target.dirty = true
-    const placement = this.aliveFighters().length + 1
-    const killer = killerEid && killerEid !== target.eid ? this.ents.get(killerEid) : null
-    const st = this.match?.stats
-    if (st && how !== 'left') {
-      // Falling into the lava sea isn't the lava catching you: told apart for balance.
-      const cause = how === 'lava' && this.match.lavaY < ISLAND_TOP - 2 ? 'fell' : how
-      st.deaths[cause] = (st.deaths[cause] || 0) + 1
-      if (killer) {
-        st.byPlayer += 1
-        if (!st.firstKillMs && this.match.fightStart) st.firstKillMs = this.now() - this.match.fightStart
-      }
-    }
-    target.diedHow = how === 'lava' && this.match && this.match.lavaY < ISLAND_TOP - 2 ? 'fell' : how
-    target.diedByPlayer = Boolean(killer)
-    target.diedAt = this.now()
-    if (killer && killer.zone === 'match') {
+    // The killer's kill effect bursts where the victim stood.
+    if (killer && killer !== target && killer.cape && killer.cape !== 'none') this.toArena(arena, 'kfx', { x: target.x, y: target.y, z: target.z, fx: killer.cape })
+    if (killer && killer !== target && killer.arena === arena.key) {
       killer.kills += 1
+      killer.lifeKills += 1
       killer.dirty = true
-      if (killer.cid) this.sendTo(killer.cid, 'killed', { name: target.name })
+      if (arena.kind === 'ffa') {
+        // Ending a streak claims the bounty on it; starting one puts a bounty up.
+        if (target.lifeKills >= BOUNTY_STREAK) {
+          killer.bounties = (killer.bounties || 0) + 1
+          this.toArena(arena, 'toast', { text: `${killer.name} claimed ${target.name}'s bounty!`, kind: 'success' })
+        }
+        if (killer.lifeKills === BOUNTY_STREAK || killer.lifeKills === 5 || killer.lifeKills === 10) {
+          this.toArena(arena, 'toast', { text: `${killer.name} is on a ${killer.lifeKills} kill streak - bounty is up!`, kind: 'error' })
+        }
+        this.rosterDirty = true
+      }
+      if (arena.kind === 'ffa' && killer.alive) {
+        killer.hp = Math.min(killer.maxHp, killer.hp + FFA.killHeal)
+        if (killer.cid) this.sendTo(killer.cid, 'killed', { name: target.name, cash: !killer.bot })
+      } else if (killer.cid) this.sendTo(killer.cid, 'killed', { name: target.name, cash: false })
     }
-    this.toZone('match', 'feed', { k: killer?.name || '', v: target.name, how })
-    this.toZone('spec', 'feed', { k: killer?.name || '', v: target.name, how })
+    this.toArena(arena, 'feed', { k: killer?.name || '', v: target.name, how })
     this.rosterDirty = true
     this.phaseDirty = true
-    // Teams: you place when your whole team is out (and win if they win).
-    const teamSize = this.match?.teamSize || 1
-    const teamAlive = teamSize > 1 && this.aliveFighters().some((e) => e.team === target.team)
-    const teamPlace = this.aliveTeams().size + 1
-    if (target.cid) {
-      if (how !== 'left') {
+    if (arena.kind === 'duel') {
+      if (target.cid) {
         target.zone = 'spec'
-        this.sendTo(target.cid, 'dead', { by: killer?.name || '', how, placement: teamSize > 1 ? (teamAlive ? 0 : teamPlace) : placement })
+        this.sendTo(target.cid, 'dead', { by: killer?.name || '', how, kind: 'duel' })
       }
-      if (teamAlive) target.pendingReward = true
-      else this.reward(target, teamSize > 1 ? teamPlace : placement)
-    } else if (target.bot) {
-      target.zone = 'match'
-    }
-    if (teamSize > 1 && !teamAlive) {
-      for (const e of this.ents.values()) {
-        if (e.pendingReward && e.team === target.team) {
-          e.pendingReward = false
-          this.reward(e, teamPlace)
-        }
+      const winner = arena.fighters.map((eid) => this.ents.get(eid)).find((e) => e && e !== target)
+      this.roundOver(arena, winner || null, 'kill')
+    } else {
+      target.needKit = true
+      if (target.cid) {
+        target.zone = 'spec'
+        this.sendTo(target.cid, 'dead', { by: killer?.name || '', how, kind: 'ffa' })
+        this.reward(target, { kind: 'ffa', mode: target.kit, win: false, kills: target.lifeKills, hits: target.stats.hits, bestCombo: target.stats.best, bounties: target.bounties || 0 })
+      } else if (target.bot) {
+        target.respawnAt = this.now() + FFA.botRespawnMs
       }
+      this.track('ffa_death', { how, byBot: Boolean(killer?.bot), kit: target.kit, bot: Boolean(target.bot) })
     }
-    this.checkWin(target)
+  }
+
+  /** A duel or a Spirelands life is over for `ent`: cash, XP, quest progress. */
+  reward(ent, result) {
+    if (!ent.cid) return
+    this.onReward(ent.cid, result)
+  }
+
+  /** An analytics event; never lets a failing sink break the game. */
+  track(type, data) {
+    try {
+      this.onAnalytics(type, data)
+    } catch {
+      // Analytics are best effort.
+    }
   }
 
   // --- Inventory --------------------------------------------------------------------------
-
-  /** Adds `n` of `id` to the hotbar (stacking first). Returns how many didn't fit. */
-  give(ent, id, n) {
-    const item = ITEMS[id]
-    if (!item) return n
-    const max = item.stack || 1
-    for (const slot of ent.inv) {
-      if (n <= 0) break
-      if (slot && slot.id === id && slot.n < max) {
-        const add = Math.min(max - slot.n, n)
-        slot.n += add
-        n -= add
-      }
-    }
-    for (let i = 0; i < ent.inv.length && n > 0; i += 1) {
-      if (!ent.inv[i]) {
-        const add = Math.min(max, n)
-        ent.inv[i] = { id, n: add }
-        n -= add
-      }
-    }
-    // Swap a worse sword for a better one when the hotbar is full.
-    if (n > 0 && item.kind === 'sword') {
-      const worst = ent.inv.findIndex((s) => s && ITEMS[s.id].kind === 'sword' && ITEMS[s.id].dmg < item.dmg)
-      if (worst >= 0) {
-        ent.inv[worst] = { id, n: 1 }
-        n = 0
-      }
-    }
-    ent.dirty = true
-    return n
-  }
 
   take(ent, slotIndex, n) {
     const slot = ent.inv[slotIndex]
@@ -1470,19 +2048,34 @@ export class GameHost {
 
   // --- World ------------------------------------------------------------------------------
 
-  setBlock(x, y, z, id) {
-    const m = this.match
-    if (!m.world.set(x, y, z, id)) return
-    m.edits.set(blockKey(x, y, z), id)
-    m.pending.push(x, y, z, id)
+  setBlock(arena, x, y, z, id, restoring = false, fromWater = false) {
+    const before = arena.world.get(x, y, z)
+    if (!arena.world.set(x, y, z, id)) return
+    // A change by water itself wakes its own neighbours; any other change next to water
+    // (digging beside the sea, pouring a bucket, a block placed in a stream) lets it move.
+    if (!fromWater) {
+      const w = arena.world
+      if (isWater(id) || isWater(before) || NEIGHBOURS.some(([dx, dy, dz]) => isWater(w.get(x + dx, y + dy, z + dz)))) this.wakeWater(arena, x, y, z)
+    }
+    const key = blockKey(x, y, z)
+    if (id === B.AIR) arena.placed.delete(key)
+    // Where the campfires are (for their warmth).
+    if (id === B.CAMPFIRE) (arena.campfires ||= new Set()).add(key)
+    else if (before === B.CAMPFIRE) arena.campfires?.delete(key)
+    arena.edits.set(key, id)
+    arena.pending.push(x, y, z, id)
+    if (arena.kind === 'ffa' && !restoring && !arena.orig.has(key)) {
+      arena.orig.set(key, before)
+      arena.restore.push({ key, at: this.now() + FFA.restoreMs })
+    }
   }
 
   /** The client guessed wrong: put its copy of the block back. */
   reject(ent, x, y, z) {
-    if (!ent.cid || !this.match) return
-    const w = this.match.world
-    if (!w.inBounds(x, y, z)) return
-    this.sendTo(ent.cid, 'edits', { e: [x, y, z, w.get(x, y, z)] })
+    const arena = this.arenas.get(ent.arena)
+    if (!ent.cid || !arena?.world) return
+    if (!arena.world.inBounds(x, y, z)) return
+    this.sendTo(ent.cid, 'edits', { e: [x, y, z, arena.world.get(x, y, z)] })
     ent.dirty = true
   }
 
@@ -1503,6 +2096,8 @@ export class GameHost {
     ent.x = x
     ent.y = y
     ent.z = z
+    ent.peakY = y
+    ent.wasAir = false
     if (yaw !== undefined) ent.yaw = yaw
     ent.posAt = this.now()
     ent.tpGrace = this.now() + 1200
@@ -1518,105 +2113,224 @@ export class GameHost {
     if (ent.cid) this.sendTo(ent.cid, 'tp', { x, y, z, yaw: yaw ?? null, zone: ent.zone })
   }
 
+  /** Tells a player about the world they're entering (and every change to it so far). */
+  sendMatch(ent, arena) {
+    if (!ent.cid || !arena.world) return
+    ent.lastWorld = arena.key
+    const edits = []
+    for (const [key, id] of arena.edits) edits.push(key, id)
+    this.sendTo(ent.cid, 'match', { kind: arena.kind, map: arena.mapId, seed: arena.seed, mode: arena.mode, edits })
+  }
+
+  toLobby(ent, announce = true) {
+    ent.zone = 'lobby'
+    ent.arena = null
+    ent.alive = false
+    ent.needKit = false
+    ent.lastWorld = null
+    ent.hp = HP
+    ent.maxHp = HP
+    ent.absorb = 0
+    ent.inv = new Array(INV_SIZE).fill(null)
+    ent.armor = { tier: 'none', dura: [0, 0, 0, 0] }
+    ent.effects = {}
+    ent.blocking = false
+    ent.team = -1
+    ent.dirty = true
+    const s = this.lobby.spawn
+    const a = this.random() * Math.PI * 2
+    const r = this.random() * 5
+    this.teleport(ent, s.x + Math.cos(a) * r, s.y, s.z + Math.sin(a) * r, 0)
+    if (announce && ent.cid) this.sendTo(ent.cid, 'lobby', {})
+  }
+
   // --- Sending ----------------------------------------------------------------------------
 
-  toZone(zone, type, payload, exceptCid = null) {
+  /** To everyone in `zone` (and in `arenaKey`, unless null). */
+  toZone(zone, arenaKey, type, payload, exceptCid = null) {
     for (const ent of this.ents.values()) {
-      if (ent.cid && ent.zone === zone && ent.cid !== exceptCid) this.sendTo(ent.cid, type, payload)
+      if (ent.cid && ent.zone === zone && (arenaKey === null || ent.arena === arenaKey) && ent.cid !== exceptCid) this.sendTo(ent.cid, type, payload)
     }
   }
 
-  toMatchViewers(type, payload) {
-    this.toZone('match', type, payload)
-    this.toZone('spec', type, payload)
+  /** To everyone in an arena's world: fighters and spectators. */
+  toArena(arena, type, payload, exceptCid = null) {
+    if (!arena) return
+    for (const ent of this.ents.values()) {
+      if (ent.cid && ent.arena === arena.key && (ent.zone === 'match' || ent.zone === 'spec') && ent.cid !== exceptCid) this.sendTo(ent.cid, type, payload)
+    }
   }
 
-  phasePayload() {
-    const now = this.now()
-    const m = this.match
-    return {
-      phase: this.phase,
-      left: Math.max(0, this.phaseEnds - now),
-      mode: m?.mode || null,
-      map: m?.mapId || null,
-      alive: m ? this.aliveFighters().length : 0,
-      teamsLeft: m ? this.aliveTeams().size : 0,
-      teamSize: m?.teamSize || 1,
-      fighters: m?.fighters || 0,
-      votes: this.voteCounts(),
-      mapVotes: this.mapVoteCounts(),
-      mapOptions: this.mapOptions,
-      voteStage: this.phase === 'intermission' ? this.voteStage : 'mode',
-      stageLeft: this.phase === 'intermission' ? Math.max(0, this.stageEnds - now) : 0,
-      chosenMode: this.lockedMode,
-      chosenBots: this.lockedBots,
-      botVotes: this.botVoteCounts(),
-      botLevel: m?.botLevel || null,
-      elapsed: m && m.fightStart ? now - m.fightStart : 0,
-      waitingFor: this.eligibleMembers().length,
+  phaseFor(member, ent, now, lobbyInfo) {
+    const arena = this.arenas.get(member.duel || ent.arena)
+    if (arena?.kind === 'duel') {
+      const base = {
+        kind: 'duel',
+        phase: arena.phase,
+        left: Math.max(0, arena.phaseEnds - now),
+        mode: arena.mode,
+        map: arena.mapId,
+        round: arena.round,
+        ft: MODES[arena.mode].ft,
+        score: this.scoreList(arena),
+        roundWinner: arena.roundWinner,
+        winner: arena.winner ?? null,
+      }
+      if (arena.phase === 'vote') {
+        const votes = Object.fromEntries(arena.mapOptions.map((id) => [id, 0]))
+        for (const v of arena.votes.values()) votes[v] += 1
+        return { ...base, mapOptions: arena.mapOptions, mapVotes: votes, myMapVote: arena.votes.get(ent.eid) || null }
+      }
+      return base
     }
+    if (arena?.kind === 'ffa') {
+      let alive = 0
+      for (const e of this.ents.values()) if (e.arena === 'ffa' && e.alive) alive += 1
+      return {
+        kind: 'ffa',
+        phase: 'fight',
+        left: 0,
+        mode: ent.kit,
+        map: 'spirelands',
+        alive,
+        needKit: !ent.alive,
+        queue: member.queue,
+        queuedMs: member.queue ? now - member.queuedAt : 0,
+        searching: lobbyInfo.searching,
+      }
+    }
+    return { kind: 'lobby', phase: 'lobby', left: 0, queue: member.queue, queuedMs: member.queue ? now - member.queuedAt : 0, ...lobbyInfo }
   }
 
   flush(dt, now) {
-    const m = this.match
-    if (m && m.pending.length) {
-      this.toMatchViewers('edits', { e: m.pending })
-      m.pending = []
-    }
-    if (this.phaseDirty || now - this.phaseSentAt > 2000) {
-      this.phaseDirty = false
-      this.phaseSentAt = now
-      const payload = this.phasePayload()
-      for (const member of this.members.values()) {
-        const ent = this.ents.get(member.eid)
-        const canJoin = Boolean(ent && ent.zone !== 'match' && this.match && !this.joinBlocked(ent))
-        this.sendTo(member.cid, 'phase', { ...payload, myVote: member.vote, myMapVote: member.mapVote, myBotVote: member.botVote, afk: member.afk, canJoin })
+    for (const arena of this.arenas.values()) {
+      if (arena.pending.length) {
+        this.toArena(arena, 'edits', { e: arena.pending })
+        arena.pending = []
       }
     }
-    if (this.rosterDirty) {
+    if (this.phaseDirty || now - this.phaseSentAt > 1000) {
+      this.phaseDirty = false
+      this.phaseSentAt = now
+      const searching = Object.fromEntries(MODE_IDS.map((id) => [id, 0]))
+      const playing = Object.fromEntries(MODE_IDS.map((id) => [id, 0]))
+      let ffa = 0
+      for (const m of this.members.values()) {
+        if (m.queue) searching[m.queue] += 1
+        const a = this.arenas.get(m.duel)
+        if (a) playing[a.mode] += 1
+        const e = this.ents.get(m.eid)
+        if (e?.arena === 'ffa') ffa += 1
+      }
+      const lobbyInfo = { searching, playing, ffa, online: this.members.size }
+      for (const member of this.members.values()) {
+        const ent = this.ents.get(member.eid)
+        if (ent) this.sendTo(member.cid, 'phase', this.phaseFor(member, ent, now, lobbyInfo))
+      }
+    }
+    // Who's here. Names and avatar looks go out only when they change (someone joins,
+    // leaves, dresses up): with a full server that list is tens of KB. Kills, deaths and
+    // respawns send just the small state below - and no more than five times a second.
+    if (this.rosterDirty && now - (this.rosterAt || 0) >= ROSTER_GAP_MS) {
       this.rosterDirty = false
-      const list = [...this.ents.values()].map((e) => ({
-        eid: e.eid,
-        name: e.name,
-        bot: e.bot,
-        cape: e.cape,
-        sword: e.sword,
-        level: e.level || 1,
-        vip: Boolean(e.vip),
-        look: e.look || '',
-        team: e.zone === 'lobby' ? -1 : e.team ?? -1,
-        zone: e.zone,
-        alive: e.alive,
-        kills: e.kills,
-      }))
-      for (const member of this.members.values()) this.sendTo(member.cid, 'roster', { list })
+      this.rosterAt = now
+      const list = []
+      const state = []
+      let sig = ''
+      for (const e of this.ents.values()) {
+        if (e.zone === 'limbo') continue
+        const streak = e.alive && e.arena === 'ffa' ? e.lifeKills : 0
+        const armor = e.zone === 'match' ? e.armor.tier : 'none'
+        const team = e.team ?? -1
+        list.push({
+          eid: e.eid,
+          name: e.name,
+          bot: e.bot,
+          cape: e.cape,
+          sword: e.sword,
+          level: e.level || 1,
+          vip: Boolean(e.vip),
+          look: e.look || '',
+          team,
+          zone: e.zone,
+          arena: e.arena,
+          alive: e.alive,
+          kills: e.kills,
+          streak,
+          armor,
+        })
+        sig += `${e.eid}|${e.name}|${e.bot ? 1 : 0}|${e.cape}|${e.sword}|${e.level || 1}|${e.vip ? 1 : 0}|${e.look || ''}\n`
+        state.push(e.eid, e.zone, e.arena || '', e.alive ? 1 : 0, e.kills || 0, streak || 0, armor, team)
+      }
+      if (sig !== this.rosterSig) {
+        this.rosterSig = sig
+        for (const member of this.members.values()) this.sendTo(member.cid, 'roster', { list })
+      } else {
+        for (const member of this.members.values()) this.sendTo(member.cid, 'rstate', { s: state })
+      }
     }
     for (const ent of this.ents.values()) {
       if (!ent.dirty || !ent.cid) continue
       ent.dirty = false
       const effects = {}
-      for (const [k, v] of Object.entries(ent.effects)) if (k !== 'burnBy' && v > now) effects[k] = v - now
-      this.sendTo(ent.cid, 'me', { hp: ent.hp, maxHp: ent.maxHp, inv: ent.inv, sel: ent.sel, effects, alive: ent.alive, zone: ent.zone, kills: ent.kills })
+      for (const [k, v] of Object.entries(ent.effects)) if (v > now) effects[k] = v - now
+      this.sendTo(ent.cid, 'me', {
+        hp: ent.hp,
+        maxHp: ent.maxHp,
+        absorb: ent.absorb,
+        inv: ent.inv,
+        sel: ent.sel,
+        effects,
+        alive: ent.alive,
+        zone: ent.zone,
+        kills: ent.kills,
+        armor: ent.armor,
+        kit: ent.kit,
+        stats: ent.stats,
+        shieldOff: Math.max(0, ent.shieldOffUntil - now),
+        air: ent.airBubbles ?? AIR.bubbles,
+      })
     }
-    // Positions, every other tick (~10 Hz is plenty with interpolation; 20 Hz in a fight).
+    // Positions: 20 Hz in arenas, 10 Hz in the lobby.
     this.snapAcc += 1
-    if (this.phase !== 'fight' && this.snapAcc % 2) return
-    const lists = { lobby: [], match: [] }
+    const lists = new Map()
+    const lobbyTick = this.snapAcc % 2 === 0
     for (const e of this.ents.values()) {
-      const list = e.zone === 'lobby' ? lists.lobby : e.zone === 'match' && e.alive ? lists.match : null
-      if (!list) continue
-      // In the lobby everyone carries a sword, to show off their sword skin.
+      let key = null
+      if (e.zone === 'lobby') key = lobbyTick ? 'lobby' : null
+      else if (e.zone === 'match' && e.alive) key = e.arena
+      if (!key) continue
+      if (!lists.has(key)) lists.set(key, [])
       const held = ITEM_IDS.indexOf(e.zone === 'lobby' ? LOBBY_SWORD : e.inv[e.sel]?.id || 'fist')
-      list.push(e.eid, Math.round(e.x * 100), Math.round(e.y * 100), Math.round(e.z * 100), Math.round(e.yaw * 100), Math.round(e.pitch * 100), e.anim, held)
+      const off = e.zone === 'lobby' ? 0 : ITEM_IDS.indexOf(e.inv[OFFHAND]?.id || 'fist')
+      // 16 = on fire (everyone sees the flames).
+      const anim = (e.blocking ? 5 : e.anim) | (e.effects.burn > now ? 16 : 0)
+      lists.get(key).push(e.eid, Math.round(e.x * 100), Math.round(e.y * 100), Math.round(e.z * 100), Math.round(e.yaw * 100), Math.round(e.pitch * 100), anim, held, off)
     }
     for (const e of this.ents.values()) {
       if (!e.cid) continue
-      const zone = e.zone === 'lobby' ? 'lobby' : 'match'
-      this.sendTo(e.cid, 'snap', { z: zone, e: lists[zone] })
+      if (e.zone === 'lobby') {
+        if (lobbyTick) this.sendTo(e.cid, 'snap', { z: 'lobby', e: lists.get('lobby') || [] })
+      } else if (e.arena === 'ffa') {
+        // Spirelands is big and holds everyone: only the players within sight of you
+        // (past SNAP_RANGE they'd be specks anyway). Less to send, less to draw.
+        this.sendTo(e.cid, 'snap', { z: 'match', e: nearOnly(lists.get('ffa') || [], e.x, e.z) })
+      } else if (e.arena) {
+        this.sendTo(e.cid, 'snap', { z: 'match', e: lists.get(e.arena) || [] })
+      }
     }
   }
 
   static get SIM_HZ() {
     return SIM_HZ
   }
+}
+
+function freshStats() {
+  return { hits: 0, taken: 0, dealt: 0, dmgTaken: 0, combo: 0, best: 0 }
+}
+
+/** A shield in a hand: the offhand, or the slot you hold. */
+function hasShield(ent) {
+  return ent.inv[OFFHAND]?.id === 'shield' || ent.inv[ent.sel]?.id === 'shield'
 }

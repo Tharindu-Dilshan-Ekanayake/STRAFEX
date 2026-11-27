@@ -4,8 +4,10 @@ import {
   AdditiveBlending,
   BackSide,
   BoxGeometry,
+  BufferGeometry,
   CanvasTexture,
   Color,
+  DoubleSide,
   EdgesGeometry,
   Float32BufferAttribute,
   Group,
@@ -16,44 +18,40 @@ import {
   MeshBasicMaterial,
   Object3D,
   PlaneGeometry,
+  Points,
+  PointsMaterial,
   SphereGeometry,
   Sprite,
   SpriteMaterial,
   SRGBColorSpace,
 } from 'three'
 
+import { DUEL_MAPS, FFA_SEA, FFA_SIZE, FFA_SKY } from '@shared/maps'
 import { mulberry32 } from '@shared/rng'
 
 import { useGame } from '../store/game'
 import { useQuality } from '../store/quality'
+import { itemMaterial, blockItemMaterial } from './art/items'
 import { makeCrackTexture, makeLiquidTexture } from './art/atlas'
+import { day, updateDay } from './dayNight'
 import { runtime } from './runtime'
+import { SUN } from './sun'
 import { worldState } from './world'
 
 /**
  * The sky (a gradient dome that follows the camera, with the sun), drifting block clouds,
- * the lava sea of a round (or the lobby's water far below), floating embers / pollen,
- * and the outline + cracks on the block you're aiming at.
+ * the lobby's water far below, floating pollen, and the outline + cracks on the block
+ * you're aiming at.
  */
 
 /** Sky colours per world: zenith, the band above the horizon, the horizon (also the fog). */
 const SKIES = {
   lobby: ['#3d9bff', '#8fd3ff', '#cdeeff'],
-  meadow: ['#3b8cf0', '#86ccff', '#cbe9ff'],
-  castle: ['#4b3fae', '#a98be0', '#ffcfa6'],
-  ember: ['#2a0b1a', '#7a2236', '#ff8a4a'],
-  autumn: ['#d9733a', '#f2b072', '#ffe6c4'],
-  marble: ['#6f8be8', '#b9c6ff', '#f5efff'],
-  jungle: ['#2f8f73', '#86d6b0', '#e2fff0'],
-  mushroom: ['#6a43b0', '#c58be0', '#ffe0f2'],
-  tropical: ['#1a9ee0', '#7fd6ff', '#e3f9ff'],
-  bricktown: ['#4a86cc', '#a8c8ea', '#f3eadf'],
-  frost: ['#5f8fd6', '#a9c8ef', '#eef5ff'],
-  candy: ['#d56bd8', '#ffa3dc', '#ffe6f5'],
-  desert: ['#4f9be8', '#ffc98a', '#fff0d9'],
+  spirelands: FFA_SKY,
+  ...Object.fromEntries(Object.entries(DUEL_MAPS).map(([id, m]) => [id, m.sky])),
 }
-/** Where the sun sits (unit vector). */
-const SUN_DIR = [0.42, 0.38, -0.82]
+/** Where the sun sits (unit vector): the same sun the terrain's shadows are baked from. */
+const SUN_DIR = SUN
 const zenith = new Color()
 const mid = new Color()
 const horizon = new Color()
@@ -66,8 +64,8 @@ function skyDome() {
   return geo
 }
 
-/** Paints the dome: three-stop gradient, brighter towards the sun. */
-function paintSky(geo, colors) {
+/** Paints the dome: three-stop gradient, brighter towards the sun (`sunDir`, a unit vector). */
+function paintSky(geo, colors, sunDir = SUN_DIR, glowK = 0.55) {
   zenith.set(colors[0])
   mid.set(colors[1])
   horizon.set(colors[2])
@@ -81,8 +79,8 @@ function paintSky(geo, colors) {
     if (h < 0.25) tmpCol.copy(horizon).lerp(mid, h / 0.25)
     else tmpCol.copy(mid).lerp(zenith, Math.min(1, (h - 0.25) / 0.6))
     if (y < 0) tmpCol.copy(horizon)
-    const toSun = Math.max(0, x * SUN_DIR[0] + y * SUN_DIR[1] + z * SUN_DIR[2])
-    tmpCol.lerp(sunCol, toSun ** 6 * 0.55)
+    const toSun = Math.max(0, x * sunDir[0] + y * sunDir[1] + z * sunDir[2])
+    tmpCol.lerp(sunCol, toSun ** 6 * glowK)
     col.setXYZ(i, tmpCol.r, tmpCol.g, tmpCol.b)
   }
   col.needsUpdate = true
@@ -125,13 +123,15 @@ function cloudGeometry() {
 }
 
 const MAX_CLOUDS = 48
+let skyClock = 1
+let wasActive = false
 
 export function Sky() {
   const zone = useGame((s) => s.zone)
-  const map = useGame((s) => s.phase.map)
+  const map = useGame((s) => (s.phase.kind === 'lobby' || s.phase.phase === 'vote' ? 'lobby' : s.phase.map))
   const clouds = useQuality((s) => s.settings.cloudCount)
   const scene = useThree((s) => s.scene)
-  const { dome, sun, cloudMesh, group } = useMemo(() => {
+  const { dome, sun, cloudMesh, stars, group } = useMemo(() => {
     const g = new Group()
     const d = new Mesh(skyDome(), new MeshBasicMaterial({ vertexColors: true, side: BackSide, fog: false, depthWrite: false }))
     d.renderOrder = -10
@@ -141,13 +141,27 @@ export function Sky() {
     const c = new InstancedMesh(cloudGeometry(), new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.86, depthWrite: false, fog: false }), MAX_CLOUDS)
     c.frustumCulled = false
     c.renderOrder = -8
-    g.add(d, sn, c)
-    return { dome: d, sun: sn, cloudMesh: c, group: g }
+    // Stars for Spirelands' nights: one draw, faded in as it gets dark.
+    const starPos = []
+    const rng = mulberry32(11)
+    for (let i = 0; i < 420; i += 1) {
+      const a = rng() * Math.PI * 2
+      const h = 0.12 + rng() * 0.88
+      const r = Math.sqrt(1 - h * h)
+      starPos.push(Math.cos(a) * r * 380, h * 380, Math.sin(a) * r * 380)
+    }
+    const starGeo = new BufferGeometry()
+    starGeo.setAttribute('position', new Float32BufferAttribute(starPos, 3))
+    const st = new Points(starGeo, new PointsMaterial({ color: '#ffffff', size: 2.2, sizeAttenuation: false, transparent: true, opacity: 0, depthWrite: false, fog: false }))
+    st.renderOrder = -9
+    st.visible = false
+    g.add(d, st, sn, c)
+    return { dome: d, sun: sn, cloudMesh: c, stars: st, group: g }
   }, [])
 
   // Colours per map; the fog takes the horizon colour so far islands melt into the sky.
   useEffect(() => {
-    const colors = SKIES[zone === 'lobby' ? 'lobby' : map] || SKIES.meadow
+    const colors = SKIES[zone === 'lobby' ? 'lobby' : map] || SKIES.lobby
     paintSky(dome.geometry, colors)
     if (scene.fog) scene.fog.color.set(colors[2])
     scene.background = new Color(colors[2])
@@ -161,11 +175,11 @@ export function Sky() {
       const a = rng() * Math.PI * 2
       if (i % 3 === 2) {
         const r = 120 + rng() * 90
-        o.position.set(56 + Math.cos(a) * r, 40 + rng() * 14, 56 + Math.sin(a) * r)
+        o.position.set(64 + Math.cos(a) * r, 34 + rng() * 10, 64 + Math.sin(a) * r)
         o.scale.set(16 + rng() * 26, 4 + rng() * 4, 12 + rng() * 18)
       } else {
         const r = 30 + rng() * 170
-        o.position.set(56 + Math.cos(a) * r, 72 + rng() * 14, 56 + Math.sin(a) * r)
+        o.position.set(64 + Math.cos(a) * r, 76 + rng() * 14, 64 + Math.sin(a) * r)
         o.scale.set(10 + rng() * 22, 2.4 + rng() * 1.2, 8 + rng() * 14)
       }
       o.updateMatrix()
@@ -177,8 +191,40 @@ export function Sky() {
 
   useFrame(({ camera }, dt) => {
     dome.position.copy(camera.position)
-    sun.position.set(camera.position.x + SUN_DIR[0] * 360, camera.position.y + SUN_DIR[1] * 360, camera.position.z + SUN_DIR[2] * 360)
+    stars.position.copy(camera.position)
     cloudMesh.position.x = ((cloudMesh.position.x + dt * 0.8 + 120) % 240) - 120
+    // Spirelands' day and night (elsewhere: always day).
+    const active = worldState.arena === 'ffa' && worldState.kind === 'match'
+    updateDay(active)
+    const o = active ? day.orb : null
+    const dir = o ? [o.x, o.y, o.z] : SUN_DIR
+    sun.position.set(camera.position.x + dir[0] * 360, camera.position.y + dir[1] * 360, camera.position.z + dir[2] * 360)
+    // The moon: smaller and pale blue; the sun warm.
+    sun.material.color.set(day.moon ? '#cfe0ff' : '#ffffff')
+    sun.scale.setScalar(day.moon ? 70 : 150)
+    stars.visible = active && day.night > 0.05
+    stars.material.opacity = Math.min(1, day.night * 1.2)
+    const shade = day.light
+    cloudMesh.material.color.copy(day.tint).multiplyScalar(shade)
+    // Figures and held items are unlit: they dim with the sky.
+    const lit = active ? day.light : 1
+    itemMaterial.color.copy(day.tint).multiplyScalar(lit)
+    blockItemMaterial.color.copy(day.tint).multiplyScalar(lit)
+    // Repaint the dome (and fog) a few times a second while the day turns.
+    skyClock += dt
+    if (active && skyClock > 0.5) {
+      skyClock = 0
+      paintSky(dome.geometry, day.sky, dir, day.moon ? 0.12 : 0.55)
+      if (scene.fog) scene.fog.color.copy(day.sky[2])
+      if (scene.background?.isColor) scene.background.copy(day.sky[2])
+      wasActive = true
+    } else if (!active && wasActive) {
+      wasActive = false
+      const colors = SKIES[zone === 'lobby' ? 'lobby' : map] || SKIES.lobby
+      paintSky(dome.geometry, colors)
+      if (scene.fog) scene.fog.color.set(colors[2])
+      scene.background = new Color(colors[2])
+    }
   })
 
   useEffect(
@@ -189,78 +235,76 @@ export function Sky() {
       sun.material.dispose()
       cloudMesh.geometry.dispose()
       cloudMesh.material.dispose()
+      stars.geometry.dispose()
+      stars.material.dispose()
     },
-    [dome, sun, cloudMesh],
+    [dome, sun, cloudMesh, stars],
   )
 
   return <primitive object={group} />
 }
 
 /**
- * The lava sea in a round (rising with the clock), water far under the lobby. Each is a
- * base layer plus, from MEDIUM up, a second brighter layer drifting the other way on
- * top, so the surface churns (lava) or glints (water).
+ * The open water: far under the lobby island, and Spirelands' sea running on past the
+ * world's edge to the horizon (inside the world the sea's own blocks cover it). A base
+ * layer plus, from MEDIUM up, a brighter glint layer drifting the other way. Duel arenas
+ * float over the open sky: no water there.
  */
 export function Liquid() {
   const shimmer = useQuality((s) => s.settings.particles)
-  const { lava, lavaGlow, water, waterGlint } = useMemo(() => {
-    const geo = new PlaneGeometry(700, 700)
+  const { water, waterGlint } = useMemo(() => {
+    const geo = new PlaneGeometry(900, 900)
     geo.rotateX(-Math.PI / 2)
     const tex = (kind, repeat) => {
       const t = makeLiquidTexture(kind)
       t.repeat.set(repeat, repeat)
       return t
     }
-    const l = new Mesh(geo, new MeshBasicMaterial({ map: tex('lava', 140) }))
-    const lg = new Mesh(geo, new MeshBasicMaterial({ map: tex('lavaGlow', 90), transparent: true, blending: AdditiveBlending, depthWrite: false, opacity: 0.7 }))
-    const w = new Mesh(geo, new MeshBasicMaterial({ map: tex('water', 160), transparent: true, opacity: 0.94 }))
-    const wg = new Mesh(geo, new MeshBasicMaterial({ map: tex('waterGlint', 110), transparent: true, blending: AdditiveBlending, depthWrite: false, opacity: 0.55 }))
-    l.position.set(56, 6, 56)
-    lg.position.set(56, 6.06, 56)
-    w.position.set(36, 4, 36)
-    wg.position.set(36, 4.05, 36)
-    return { lava: l, lavaGlow: lg, water: w, waterGlint: wg }
+    // Seen from under the waves too (swimming): both sides.
+    const w = new Mesh(geo, new MeshBasicMaterial({ map: tex('water', 200), side: DoubleSide }))
+    const wg = new Mesh(geo, new MeshBasicMaterial({ map: tex('waterGlint', 140), transparent: true, blending: AdditiveBlending, depthWrite: false, opacity: 0.55 }))
+    w.position.set(64, 2, 64)
+    wg.position.set(64, 2.05, 64)
+    return { water: w, waterGlint: wg }
   }, [])
 
   useFrame((_, dt) => {
-    const inMatch = worldState.kind === 'match'
-    lava.visible = inMatch
-    lavaGlow.visible = inMatch && shimmer
-    water.visible = !inMatch
-    waterGlint.visible = !inMatch && shimmer
+    const inLobby = worldState.kind === 'lobby'
+    const atSea = worldState.arena === 'ffa'
+    const shown = inLobby || atSea
+    water.visible = shown
+    waterGlint.visible = shown && shimmer
+    if (!shown) return
+    // Just under the sea blocks' tops, so inside the world they hide it.
+    const y = atSea ? FFA_SEA + 0.9 : 2
+    const c = atSea ? FFA_SIZE.x / 2 : 64
+    if (water.position.y !== y) {
+      water.position.set(c, y, c)
+      waterGlint.position.set(c, y + 0.05, c)
+    }
     const scroll = (mesh, sx, sz) => {
       const o = mesh.material.map.offset
       o.x = (o.x + dt * sx) % 1
       o.y = (o.y + dt * sz) % 1
     }
-    scroll(lava, 0.02, 0.012)
-    if (lavaGlow.visible) {
-      scroll(lavaGlow, -0.013, 0.021)
-      lavaGlow.material.opacity = 0.55 + Math.sin(performance.now() / 700) * 0.15
-    }
+    water.material.color.copy(day.tint).multiplyScalar(atSea && day.active ? day.light : 1)
     scroll(water, 0.01, 0.004)
     if (waterGlint.visible) scroll(waterGlint, -0.008, 0.011)
-    if (inMatch) {
-      lava.position.y = runtime.lava.y - 0.08
-      lavaGlow.position.y = runtime.lava.y - 0.02
-    }
   })
 
   useEffect(
     () => () => {
-      lava.geometry.dispose()
-      for (const m of [lava, lavaGlow, water, waterGlint]) {
+      water.geometry.dispose()
+      for (const m of [water, waterGlint]) {
         m.material.map.dispose()
         m.material.dispose()
       }
     },
-    [lava, lavaGlow, water, waterGlint],
+    [water, waterGlint],
   )
 
   return (
     <>
-      <primitive object={lava} />
-      <primitive object={lavaGlow} />
       <primitive object={water} />
       <primitive object={waterGlint} />
     </>
@@ -271,8 +315,8 @@ const MAX_MOTES = 80
 const _mote = new Object3D()
 
 /**
- * Floating motes around you: embers rising off the lava in a round, drifting pollen in
- * the lobby. MEDIUM and HIGH only (one instanced mesh, positions from a fixed pool).
+ * Floating motes around you: drifting pollen, warmer in a fight. MEDIUM and HIGH only
+ * (one instanced mesh, positions from a fixed pool).
  */
 export function Motes() {
   const enabled = useQuality((s) => s.settings.particles)
@@ -297,15 +341,15 @@ export function Motes() {
     if (!enabled) return
     const t = performance.now() / 1000
     const inMatch = worldState.kind === 'match'
-    mesh.material.color.set(inMatch ? '#ff8a2a' : '#fff6c8')
+    mesh.material.color.set(inMatch ? '#ffe2a8' : '#fff6c8')
     const cx = camera.position.x
     const cz = camera.position.z
-    const base = inMatch ? runtime.lava.y : camera.position.y - 6
-    const span = inMatch ? 28 : 14
+    const base = camera.position.y - 6
+    const span = 14
     for (let i = 0; i < MAX_MOTES; i += 1) {
       const m = motes[i]
       // Each rises through its band and wraps; the field repeats around the camera.
-      const h = (m.h + t * m.speed * (inMatch ? 0.05 : 0.015)) % 1
+      const h = (m.h + t * m.speed * 0.015) % 1
       const x = cx + ((((m.ox + Math.sin(t * 0.4 + m.phase) * 2 - cx) % 60) + 90) % 60) - 30
       const z = cz + ((((m.oz + Math.cos(t * 0.3 + m.phase) * 2 - cz) % 60) + 90) % 60) - 30
       _mote.position.set(x, base + h * span, z)

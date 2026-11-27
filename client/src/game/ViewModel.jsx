@@ -2,7 +2,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo } from 'react'
 import { BoxGeometry, Color, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene } from 'three'
 
-import { ITEMS } from '@shared/balance'
+import { ITEMS, OFFHAND } from '@shared/balance'
 
 import { getGame } from '../store/game'
 import { itemModel } from './art/items'
@@ -26,7 +26,7 @@ function armGeometry() {
 
 export default function ViewModel() {
   const size = useThree((s) => s.size)
-  const { scene, camera, holder, arm, item, equip } = useMemo(() => {
+  const { scene, camera, holder, arm, item, offHolder, offItem, equip } = useMemo(() => {
     const sc = new Scene()
     const cam = new PerspectiveCamera(70, 1, 0.01, 10)
     const h = new Group()
@@ -34,8 +34,13 @@ export default function ViewModel() {
     const it = new Mesh(undefined, undefined)
     it.visible = false
     h.add(a, it)
-    sc.add(h)
-    return { scene: sc, camera: cam, holder: h, arm: a, item: it, equip: { held: '', at: 0 } }
+    // The left hand: whatever is in the offhand, low on the left of the screen.
+    const oh = new Group()
+    const oit = new Mesh(undefined, undefined)
+    oit.visible = false
+    oh.add(oit)
+    sc.add(h, oh)
+    return { scene: sc, camera: cam, holder: h, arm: a, item: it, offHolder: oh, offItem: oit, equip: { held: '', at: 0 } }
   }, [])
 
   useEffect(() => {
@@ -60,7 +65,11 @@ export default function ViewModel() {
     const show = runtime.camera.mode === 'first' && runtime.zone === 'match' && runtime.me.alive && !getGame().panel
     if (!show) return
     const now = performance.now()
-    const held = runtime.me.inv?.[runtime.me.sel]?.id || 'fist'
+    const offId = runtime.me.inv?.[OFFHAND]?.id || null
+    // Blocking with the offhand's shield raises it on the left; the right hand keeps its item.
+    const offBlocking = runtime.blocking && offId === 'shield'
+    const blocking = runtime.blocking && !offBlocking
+    const held = blocking ? 'shield' : runtime.me.inv?.[runtime.me.sel]?.id || 'fist'
     const def = ITEMS[held]
     const model = itemModel(held, getGame().profile.sword)
 
@@ -70,7 +79,9 @@ export default function ViewModel() {
     const bobY = Math.abs(Math.sin(p.walkPhase)) * 0.04 * walk
     const swingT = (now - runtime.swingAt) / 260
     const swing = swingT >= 0 && swingT < 1 ? Math.sin(swingT * Math.PI) : 0
-    const eating = now < runtime.useAnimUntil ? Math.sin(((runtime.useAnimUntil - now) / 350) * Math.PI) : 0
+    // Holding to eat: the food comes up to your mouth and bobs; a quick dip once it's done.
+    const chewing = runtime.eatStart ? Math.min(1, (now - runtime.eatStart) / 200) * (0.8 + Math.sin(now / 70) * 0.2) : 0
+    const eating = Math.max(chewing, now < runtime.useAnimUntil ? Math.sin(((runtime.useAnimUntil - now) / 350) * Math.PI) : 0)
     const pull = runtime.bowPullAt ? Math.min(1, (now - runtime.bowPullAt) / 900) : 0
     // A new item comes up from below the screen with a little overshoot.
     if (held !== equip.held) {
@@ -101,17 +112,26 @@ export default function ViewModel() {
       if (model.block) {
         item.position.set(0, 0, 0)
         item.rotation.set(0.35, 0.75, 0)
-        item.scale.set(0.32, 0.32, 0.32)
+        item.scale.set(0.4, 0.4, 0.4)
+      } else if (def?.kind === 'shield') {
+        // Raised: across the middle of the screen, face on. Lowered: held at your side.
+        item.position.set(blocking ? -0.34 : 0.02, blocking ? 0.14 : 0.02, blocking ? 0.04 : 0)
+        item.rotation.set(0, blocking ? -0.3 : -0.9, 0)
+        item.scale.set(0.44, 0.44, 0.44)
       } else if (def?.kind === 'bow') {
-        item.position.set(-0.05, 0.08, 0)
+        item.position.set(-0.06, 0.12, 0)
         item.rotation.set(0, -0.5, -0.3 + pull * 0.3)
-        item.scale.set(-0.5, 0.5, 0.5)
+        item.scale.set(-0.64, 0.64, 0.64)
       } else {
         // Mirrored so the blade (drawn pointing up-right) points up and in toward the
         // crosshair, turned a little so its face catches the light.
-        item.position.set(0, 0.06, 0)
+        // Weapons big and bold in your hand (the handle stays low at the right); apples,
+        // potions and the like smaller, so eating doesn't fill the screen.
+        const weapon = def && ['sword', 'axe', 'mace', 'spear'].includes(def.kind)
+        const k = weapon ? 0.56 : 0.4
+        item.position.set(weapon ? -0.02 : 0, weapon ? 0.13 : 0.06, 0)
         item.rotation.set(-0.15, -0.6, 0.1)
-        item.scale.set(-0.42, 0.42, 0.42)
+        item.scale.set(-k, k, k)
       }
     } else {
       item.visible = false
@@ -119,6 +139,34 @@ export default function ViewModel() {
       arm.position.set(0.05, -0.05, 0.1)
       arm.rotation.set(0.25, 0.15, 0)
     }
+    // The left hand.
+    const offModel = offId ? itemModel(offId, getGame().profile.sword) : null
+    if (offModel) {
+      if (offItem.geometry !== offModel.geometry) {
+        offItem.geometry = offModel.geometry
+        offItem.material = offModel.material
+      }
+      offItem.visible = true
+      const offEating = runtime.useHand === 'off' ? eating : 0
+      offHolder.scale.setScalar(camera.aspect < 1 ? 0.8 : 1)
+      offHolder.position.set(-handX - bobX + offEating * 0.2, -0.38 - bobY + offEating * 0.12 - raise * raise * 0.45 - land * 0.08, -0.62)
+      offHolder.rotation.set(offEating * 0.4 + land * 0.15, 0, 0)
+      if (offModel.block) {
+        offItem.position.set(0, 0, 0)
+        offItem.rotation.set(0.35, -0.75, 0)
+        offItem.scale.set(0.34, 0.34, 0.34)
+      } else if (offId === 'shield') {
+        // Raised: in front of you, a little left of the middle. Lowered: at your side.
+        offItem.position.set(offBlocking ? 0.2 : 0, offBlocking ? 0.16 : 0.02, offBlocking ? 0.04 : 0)
+        offItem.rotation.set(0, offBlocking ? 0.3 : 0.9, 0)
+        offItem.scale.set(0.44, 0.44, 0.44)
+      } else {
+        offItem.position.set(0, 0.06, 0)
+        offItem.rotation.set(-0.15, 0.6, -0.1)
+        offItem.scale.set(0.36, 0.36, 0.36)
+      }
+    } else offItem.visible = false
+
     gl.autoClear = false
     gl.clearDepth()
     gl.render(scene, camera)

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { ITEMS } from '@shared/balance'
+import { ITEMS, OFFHAND } from '@shared/balance'
 
 import { runtime } from '../game/runtime'
 import { getGame, useGame } from '../store/game'
@@ -20,30 +20,40 @@ const STICK = 64
 
 
 /** What the use button does with the item in hand. */
-function actionFor(item) {
+function actionFor(item, shield) {
   switch (item?.kind) {
     case 'block':
-    case 'tnt':
+    case 'crystal':
       return { icon: 'cube', label: 'PLACE', color: '58,111,216' }
     case 'food':
       return { icon: 'apple', label: 'EAT', color: '230,140,40' }
     case 'potion':
-    case 'heart':
       return { icon: 'potion', label: 'DRINK', color: '190,80,220' }
     case 'throw':
+    case 'splash':
       return { icon: 'ball', label: 'THROW', color: '70,170,200' }
     case 'bow':
       return { icon: 'bow', label: 'SHOOT', color: '150,100,50' }
+    case 'spear':
+      return { icon: 'ball', label: 'LUNGE', color: '70,170,90' }
+    case 'bucket':
+      return item.fill ? { icon: 'ball', label: 'POUR', color: '63,140,255' } : { icon: 'ball', label: 'SCOOP', color: '90,110,140' }
     default:
-      return null
+      // Anything else: right click raises the shield, if you have one.
+      return shield ? { icon: 'cube', label: 'BLOCK', color: '120,120,140' } : null
   }
 }
+
+/** Thumbs held on a hit/use button, by button: dragging them turns the camera too. */
+const btnLook = {}
 
 export default function TouchControls() {
   const [enabled, setEnabled] = useState(isTouchDevice)
   const zone = useGame((s) => s.zone)
   const panel = useGame((s) => s.panel)
   const heldId = useGame((s) => s.me.inv[s.me.sel]?.id)
+  const hasShield = useGame((s) => s.me.inv[OFFHAND]?.id === 'shield' || s.me.inv[s.me.sel]?.id === 'shield')
+  const offItem = useGame((s) => ITEMS[s.me.inv[OFFHAND]?.id])
   const [sneak, setSneak] = useState(false)
   const [held, setHeld] = useState({})
   const stick = useRef({ id: null, ox: 0, oy: 0 })
@@ -138,16 +148,55 @@ export default function TouchControls() {
     },
   })
 
+  /**
+   * Like `hold`, and the thumb on the button aims too: slide it while holding and the
+   * camera turns with it - hit (or block, or draw a bow) and aim with one thumb, no need
+   * to let go and turn first.
+   */
+  const holdLook = (key) => {
+    const h = hold(key)
+    return {
+      onTouchStart: (e) => {
+        h.onTouchStart(e)
+        const t = e.changedTouches[0]
+        if (t) btnLook[key] = { id: t.identifier, x: t.clientX, y: t.clientY }
+      },
+      onTouchMove: (e) => {
+        e.stopPropagation()
+        const s = btnLook[key]
+        if (!s) return
+        for (const t of e.changedTouches) {
+          if (t.identifier !== s.id) continue
+          const sens = useGame.getState().settings.sensitivity
+          runtime.input.lookX += (t.clientX - s.x) * LOOK_SPEED * sens
+          runtime.input.lookY += (t.clientY - s.y) * LOOK_SPEED * sens
+          s.x = t.clientX
+          s.y = t.clientY
+        }
+      },
+      onTouchEnd: (e) => {
+        h.onTouchEnd(e)
+        btnLook[key] = null
+      },
+      onTouchCancel: (e) => {
+        h.onTouchCancel(e)
+        btnLook[key] = null
+      },
+    }
+  }
+
   const item = ITEMS[heldId]
-  const use = actionFor(item)
+  // The use button follows the hand right click would use: the right, else the left.
+  const use = actionFor(item, hasShield) || actionFor(offItem, false)
   const attackIcon = item?.kind === 'sword' ? 'sword' : 'pick'
+  // Minecraft-style touch buttons: square, see-through, tinted by what they do.
   const face = (size, rgb, alpha = 0.82) => ({
     width: u(size),
     height: u(size),
-    background: `radial-gradient(circle at 35% 30%, rgba(${rgb},${alpha + 0.12}) 0%, rgba(${rgb},${alpha}) 55%, rgba(${rgb},${alpha - 0.15}) 100%)`,
+    background: `linear-gradient(180deg, rgba(${rgb},${Math.min(0.85, alpha - 0.1)}) 0%, rgba(${rgb},${Math.max(0.35, alpha - 0.3)}) 100%)`,
   })
   const label = (text, size = 13) => (
-    <span className="txt-o" style={{ fontSize: u(size), marginTop: u(2), letterSpacing: '0.05em' }}>
+    <span className="tbtn-label" style={{ fontSize: u(size - 1), marginTop: u(3) }}>
       {text}
     </span>
   )
@@ -156,12 +205,12 @@ export default function TouchControls() {
     <div className="touch-root absolute inset-0 z-[5]" data-zone={zone} onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd} onTouchCancel={onEnd} style={{ touchAction: 'none' }}>
       {/* The stick: where it rests until you touch, then under your thumb. */}
       {knob ? (
-        <div className="pointer-events-none absolute" style={{ left: knob.ox - STICK, top: knob.oy - STICK, width: STICK * 2, height: STICK * 2, borderRadius: '50%', background: 'radial-gradient(circle, rgba(255,255,255,0.08), rgba(255,255,255,0.2))', border: '3px solid rgba(255,255,255,0.45)' }}>
-          <div className="absolute" style={{ left: STICK - 28 + knob.dx, top: STICK - 28 + knob.dy, width: 56, height: 56, borderRadius: '50%', background: 'radial-gradient(circle at 35% 30%, #ffffff, #cfd8ff)', border: '3px solid rgba(13,10,24,0.6)', boxShadow: '0 4px 0 rgba(0,0,0,0.3)' }} />
+        <div className="stick-ring pointer-events-none absolute" style={{ left: knob.ox - STICK, top: knob.oy - STICK, width: STICK * 2, height: STICK * 2 }}>
+          <div className="stick-knob absolute" style={{ left: STICK - 28 + knob.dx, top: STICK - 28 + knob.dy, width: 56, height: 56 }} />
         </div>
       ) : (
-        <div className="stick-ghost pointer-events-none absolute flex items-center justify-center" style={{ left: 28, bottom: 28, width: STICK * 2, height: STICK * 2, borderRadius: '50%', border: '3px dashed rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.06)' }}>
-          <span className="txt-o" style={{ fontSize: u(14), opacity: 0.8 }}>
+        <div className="stick-ghost stick-ring pointer-events-none absolute flex items-center justify-center" style={{ left: 28, bottom: 28, width: STICK * 2, height: STICK * 2, opacity: 0.75 }}>
+          <span className="tbtn-label" style={{ fontSize: u(14) }}>
             MOVE
           </span>
         </div>
@@ -175,12 +224,12 @@ export default function TouchControls() {
         </button>
         {zone === 'match' && (
           <>
-            <button type="button" className={`tbtn absolute ${held.attack ? 'held' : ''}`} style={{ ...face(96, '216,68,58'), right: u(118), bottom: u(4) }} {...hold('attack')}>
+            <button type="button" className={`tbtn absolute ${held.attack ? 'held' : ''}`} style={{ ...face(96, '216,68,58'), right: u(118), bottom: u(4) }} {...holdLook('attack')}>
               <GameIcon name={attackIcon} size={36} />
-              {label(item?.kind === 'sword' ? 'HIT' : 'BREAK')}
+              {label('HIT')}
             </button>
             {use && (
-              <button type="button" className={`tbtn absolute ${held.use ? 'held' : ''}`} style={{ ...face(88, use.color), right: u(128), bottom: u(114) }} {...hold('use')}>
+              <button type="button" className={`tbtn absolute ${held.use ? 'held' : ''}`} style={{ ...face(88, use.color), right: u(128), bottom: u(114) }} {...holdLook('use')}>
                 <GameIcon name={use.icon} size={32} />
                 {label(use.label, 12)}
               </button>
@@ -211,7 +260,7 @@ export default function TouchControls() {
           </>
         )}
         {zone === 'lobby' && (
-          <button type="button" className={`tbtn absolute ${held.attack ? 'held' : ''}`} style={{ ...face(80, '216,68,58'), right: u(118), bottom: u(8) }} {...hold('attack')}>
+          <button type="button" className={`tbtn absolute ${held.attack ? 'held' : ''}`} style={{ ...face(80, '216,68,58'), right: u(118), bottom: u(8) }} {...holdLook('attack')}>
             <GameIcon name="sword" size={30} />
             {label('SWING', 12)}
           </button>

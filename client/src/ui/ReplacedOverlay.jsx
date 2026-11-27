@@ -9,7 +9,7 @@ export default function ReplacedOverlay() {
   if (mode !== 'replaced') return null
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="mc-panel flex flex-col items-center text-center" style={{ padding: u(28), gap: u(16) }}>
+      <div className="mc-gui flex flex-col items-center text-center" style={{ padding: u(28), gap: u(16) }}>
         <div className="txt-o" style={{ fontSize: u(30), fontWeight: 700 }}>
           PLAYING IN ANOTHER WINDOW
         </div>

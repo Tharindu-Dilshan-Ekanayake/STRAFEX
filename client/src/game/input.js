@@ -10,9 +10,11 @@ import { runtime } from './runtime'
  * controller (Player.jsx) turns it into movement and actions each frame. Touch input
  * lives in ui/TouchControls.jsx and writes to the same place.
  *
- * Desktop controls: WASD move, Space jump, Shift sneak (never fall off an edge), Ctrl or
- * double-tap W sprint, left mouse attack / break (hold), right mouse place / use (hold to
- * draw a bow), 1-9 or the wheel pick a slot, E use a station, V switch camera.
+ * Desktop controls: WASD move, Space jump, Shift (or W tapped twice) sprint, C sneak (never
+ * fall off an edge), left mouse attack (every click counts) / break (hold), right mouse
+ * place / use / block with a shield / eat (hold), 1-9 or the wheel pick a slot, E use a
+ * station (in a fight: the inventory), F swap hands, R play again after a duel, V switch
+ * camera.
  */
 
 const KEYS = {
@@ -25,13 +27,28 @@ const KEYS = {
   KeyD: 'right',
   ArrowRight: 'right',
   Space: 'jump',
-  ShiftLeft: 'sneak',
-  ShiftRight: 'sneak',
-  ControlLeft: 'sprint',
+  // Shift runs; C sneaks (Ctrl is left alone: Ctrl+W would close the tab).
+  ShiftLeft: 'sprint',
+  ShiftRight: 'sprint',
+  KeyC: 'sneak',
 }
 
 let lastForwardTap = 0
 let doubleTapSprint = false
+/** A sprint hit spent your sprint; letting go of forward (or Ctrl) brings it back. */
+let spent = false
+let spentAt = 0
+
+/** `sprintSpent()` reads it; `sprintSpent(true)` spends it (after a sprint hit). */
+export function sprintSpent(set) {
+  if (set) {
+    spent = true
+    spentAt = performance.now()
+  }
+  // Touch has no forward key to let go of: the sprint comes back by itself.
+  if (spent && runtime.input.touch && performance.now() - spentAt > 380) spent = false
+  return spent
+}
 
 /** Picks hotbar slot `slot`: shown at once here, confirmed by the host. */
 export function selectSlot(slot) {
@@ -71,8 +88,10 @@ export function installInput() {
 
   const onKeyDown = (e) => {
     if (e.target instanceof HTMLInputElement) return
+    // E (inventory, stations) lights up on the keystrokes display.
+    if (e.code === 'KeyE') input.interact = true
     const game = getGame()
-    if (e.code === 'Escape') {
+    if (e.code === 'Escape' || (e.code === 'KeyE' && game.panel === 'inventory')) {
       if (game.quickChat) game.setQuickChat(false)
       if (game.panel) game.closePanel()
       return
@@ -107,20 +126,42 @@ export function installInput() {
       runtime.camera.mode = runtime.camera.mode === 'first' ? 'third' : 'first'
       e.preventDefault()
     }
-    if (e.code === 'KeyE' && game.prompt?.startsWith('case:')) {
+    // In a fight: E is the inventory, F swaps what's in your hands.
+    if (e.code === 'KeyE' && !e.repeat && runtime.zone === 'match') {
       exitPointerLock()
-      game.openPanel('cases', { caseId: game.prompt.slice(5) })
+      game.togglePanel('inventory')
+      return
     }
+    if (e.code === 'KeyF' && !e.repeat && runtime.zone === 'match') {
+      actions.swapHands()
+      sfx.select()
+      return
+    }
+    if (e.code === 'KeyE' && !e.repeat) {
+      if (game.prompt?.startsWith('case:')) {
+        exitPointerLock()
+        game.openPanel('cases', { caseId: game.prompt.slice(5) })
+      } else if (game.prompt === 'duels') {
+        exitPointerLock()
+        game.openPanel('modes')
+      } else if (game.prompt === 'ffa') actions.ffa()
+    }
+    if (e.code === 'KeyR' && !e.repeat && game.duelOver) actions.requeue()
     if (e.code === 'KeyB' && runtime.zone === 'lobby') {
       exitPointerLock()
       game.openPanel('backpack')
     }
   }
   const onKeyUp = (e) => {
+    if (e.code === 'KeyE') input.interact = false
     const key = KEYS[e.code]
     if (!key) return
     input[key] = false
-    if (key === 'forward') doubleTapSprint = false
+    if (key === 'forward') {
+      doubleTapSprint = false
+      spent = false
+    }
+    if (key === 'sprint') spent = false
   }
 
   const onMouseDown = (e) => {
@@ -146,6 +187,8 @@ export function installInput() {
   const onContextMenu = (e) => e.preventDefault()
   const onLockChange = () => {
     const isLocked = locked()
+    // The first capture this visit starts the "Press Esc to unlock the mouse" hint's 20 s.
+    if (isLocked && !runtime.firstLockAt) runtime.firstLockAt = performance.now()
     getGame().setPointerLocked(isLocked)
     if (!isLocked) {
       input.attack = false
@@ -154,6 +197,7 @@ export function installInput() {
   }
   const onBlur = () => {
     for (const key of Object.values(KEYS)) input[key] = false
+    input.interact = false
     input.attack = false
     input.use = false
   }
@@ -180,5 +224,5 @@ export function installInput() {
   }
 }
 
-/** Sprinting from the keyboard: Ctrl, or W tapped twice. */
+/** Sprinting from the keyboard: Shift, or W tapped twice. */
 export const wantsSprint = () => runtime.input.sprint || doubleTapSprint

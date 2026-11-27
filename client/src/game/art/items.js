@@ -16,11 +16,9 @@ import { getAtlas, getAtlasCanvas, tileRect, tileUV } from './atlas'
 const S = 16
 
 const TIERS = {
-  wood: ['#a77a47', '#cfa06a', '#6d4a2a', '#4f3319'],
-  stone: ['#8f8f8f', '#bdbdbd', '#6d4a2a', '#4f3319'],
   iron: ['#d9dde2', '#ffffff', '#6d4a2a', '#4f3319'],
   diamond: ['#45dbe6', '#bdfaff', '#2b8c94', '#4f3319'],
-  blaze: ['#ff7a1a', '#ffe14d', '#b3200e', '#3a1405'],
+  cinder: ['#6b4fa8', '#b89cff', '#2a1d45', '#3a2a1a'],
 }
 
 const hex = (h) => {
@@ -66,46 +64,170 @@ const SPRITES = {
     for (let k = 1; k <= 3; k += 1) put(5 - k, 10 + k, handle)
     put(1, 14, guard)
   },
-  pickaxe: (px) => {
+  axe: (px, opts) => {
     const { put } = painters(px)
-    for (let k = 0; k < 10; k += 1) put(2 + k, 13 - k, k % 2 ? '#7a5530' : '#5c3d20')
-    const head = hex('#ffcb1f')
-    for (let k = -5; k <= 3; k += 1) {
-      put(10 + k, 3 + k, head)
-      put(11 + k, 3 + k, darker(head, 0.8))
-    }
-    put(5, 0, '#fff6c8')
-    put(14, 7, '#fff6c8')
+    const [blade, edge] = (TIERS[opts.tier] || TIERS.diamond).map(hex)
+    for (let k = 0; k < 11; k += 1) put(2 + k, 13 - k, k % 2 ? '#7a5530' : '#5c3d20')
+    // The head: a broad blade off one side of the haft, near the top.
+    const rows = [[9, 1, 3], [8, 2, 5], [8, 3, 6], [8, 4, 6], [9, 5, 5], [10, 6, 3]]
+    for (const [x0, y, w] of rows) for (let x = x0; x < x0 + w; x += 1) put(x, y, x === x0 + w - 1 ? edge : blade)
+    put(9, 2, darker(blade, 0.75))
+    put(9, 3, darker(blade, 0.75))
   },
-  bow: (px) => {
+  mace: (px) => {
+    const { put, disc } = painters(px)
+    for (let k = 0; k < 8; k += 1) put(2 + k, 13 - k, k % 2 ? '#8a6a3a' : '#5c4320')
+    disc(11, 4.5, 3.6, null, (x, y) => (x + y < 14 ? hex('#e6e9ef') : x + y < 17 ? hex('#a9b0bd') : hex('#6b7280')))
+    for (const [x, y] of [[11, 0], [15, 4], [7, 5], [11, 9], [14, 1], [8, 1], [14, 8]]) put(x, y, '#cfd6e0')
+    put(10, 3, '#ffffff')
+  },
+  spear: (px) => {
     const { put } = painters(px)
-    for (let i = 0; i <= 11; i += 1) put(2 + i, 13 - i, '#e8e8e8')
+    for (let k = 0; k < 12; k += 1) put(1 + k, 14 - k, k % 3 === 0 ? '#5c4320' : '#8a6a3a')
+    // A long iron tip and a cloth binding.
+    for (const [x, y, c] of [[12, 3, '#cfd6e0'], [13, 2, '#e6e9ef'], [14, 1, '#ffffff'], [15, 0, '#ffffff'], [13, 3, '#a9b0bd'], [12, 2, '#a9b0bd'], [14, 2, '#cfd6e0'], [13, 1, '#cfd6e0']]) put(x, y, c)
+    put(10, 5, '#d8443a')
+    put(11, 4, '#d8443a')
+  },
+  shield: (px) => {
+    const { put } = painters(px)
+    for (let y = 1; y <= 14; y += 1) {
+      const inset = y > 10 ? y - 10 : 0
+      for (let x = 2 + inset; x <= 13 - inset; x += 1) {
+        const rim = x === 2 + inset || x === 13 - inset || y === 1 || y === 14 - (y > 10 ? 0 : 0)
+        put(x, y, rim ? '#9aa3b2' : (x + y) % 5 === 0 ? '#8a5a2b' : '#a8703a')
+      }
+    }
+    // The STRAFEX diamond on the face.
+    for (const [x, y] of [[7, 4], [8, 4], [6, 5], [9, 5], [6, 6], [9, 6], [7, 7], [8, 7], [7, 5], [8, 5], [7, 6], [8, 6]]) put(x, y, y < 6 ? '#ffd23b' : '#e0a21b')
+    put(7, 8, '#3fa2ff')
+    put(8, 8, '#3fa2ff')
+  },
+  gust: (px) => {
+    const { disc, put } = painters(px)
+    disc(8, 8, 5.2, null, (x, y, d) => (d < 2 ? hex('#ffffff') : d < 3.6 ? hex('#cfeeff') : hex('#8fd0ff')))
+    // A swirl through it.
+    for (const [x, y] of [[5, 6], [6, 5], [7, 5], [8, 6], [9, 7], [9, 8], [8, 9], [7, 9], [10, 10], [11, 9]]) put(x, y, '#5fa8d8')
+  },
+  splash: (px, opts) => {
+    const { disc, put } = painters(px)
+    const liquid = hex(opts.color || '#ff4f6d')
+    disc(8, 10, 4.8, null, (x, y) => (y < 7 ? hex('#dff4ff') : x + y < 17 ? liquid : darker(liquid, 0.75)))
+    for (let y = 2; y <= 5; y += 1) {
+      put(7, y, '#dff4ff')
+      put(8, y, '#c5e6f7')
+    }
+    put(6, 3, '#c5e6f7')
+    put(9, 3, '#c5e6f7')
+    put(7, 1, '#8a5a2b')
+    put(8, 1, '#8a5a2b')
+    put(6, 8, '#ffffff')
+    put(11, 12, '#ffffff')
+  },
+  crystal: (px) => {
+    const { put } = painters(px)
+    for (let y = 1; y < 15; y += 1) {
+      for (let x = 1; x < 15; x += 1) {
+        const d = Math.abs(x - 7.5) + Math.abs(y - 7.5)
+        if (d > 7) continue
+        const c = d > 6 ? '#2a1b3d' : d < 2 ? '#ffe6ff' : d < 3.5 ? '#ff8ef0' : (x + y) % 2 ? '#c13ee6' : '#9a2cc4'
+        put(x, y, c)
+      }
+    }
+  },
+  charm: (px) => {
+    const { disc, put } = painters(px)
+    // A gold medallion with a green gem, on a red ribbon.
+    for (const [x, y] of [[6, 0], [7, 1], [9, 1], [10, 0], [8, 2]]) put(x, y, '#d8443a')
+    disc(8, 9, 5.2, null, (x, y, d) => (d > 4.3 ? hex('#a8700f') : x + y < 15 ? hex('#ffe27a') : hex('#e0a21b')))
+    disc(8, 9, 2.2, null, (x, y) => (x + y < 16 ? hex('#7cff9e') : hex('#1fae55')))
+    put(7, 8, '#e8fff0')
+  },
+  bow: (px, opts) => {
+    const { put } = painters(px)
+    // A fire bow: a glowing string and an ember at each tip.
+    for (let i = 0; i <= 11; i += 1) put(2 + i, 13 - i, opts.color ? (i % 3 ? '#ffb347' : '#ff6a1a') : '#e8e8e8')
     for (let t = 0; t <= 1.0001; t += 0.04) {
       const bx = 2 + 11 * t
       const by = 13 - 11 * t
       const off = Math.sin(Math.PI * t) * 4.2
       put(Math.round(bx - off * 0.707), Math.round(by - off * 0.707), t > 0.4 && t < 0.6 ? '#4f3319' : '#8a5a2b')
     }
-    put(1, 14, '#a0a0a0')
-    put(14, 1, '#a0a0a0')
+    put(1, 14, opts.color ? '#ff6a1a' : '#a0a0a0')
+    put(14, 1, opts.color ? '#ffd23b' : '#a0a0a0')
   },
-  snowball: (px) => {
-    const { disc } = painters(px)
-    disc(8, 8, 5, null, (x, y) => (x + y < 13 ? hex('#ffffff') : x + y < 17 ? hex('#e6f2ff') : hex('#bcd6f2')))
+  bucket: (px, opts) => {
+    const { put } = painters(px)
+    // A stone-grey pail with a handle; water in it if it's full.
+    for (let y = 5; y <= 14; y += 1) {
+      const inset = Math.floor((y - 5) / 4)
+      for (let x = 3 + inset; x <= 12 - inset; x += 1) {
+        const edge = x === 3 + inset || x === 12 - inset || y === 14
+        put(x, y, edge ? '#5d6470' : x < 7 ? '#c9ced8' : x < 10 ? '#a9b0bd' : '#878e9b')
+      }
+    }
+    for (let x = 3; x <= 12; x += 1) put(x, 5, '#5d6470')
+    for (const [x, y] of [[3, 4], [4, 2], [5, 1], [6, 1], [9, 1], [10, 1], [11, 2], [12, 4], [7, 1], [8, 1]]) put(x, y, '#5d6470')
+    if (opts.color) {
+      for (let x = 4; x <= 11; x += 1) put(x, 6, x % 3 ? '#3f8cff' : '#8fc4ff')
+      for (let x = 4; x <= 11; x += 1) put(x, 7, '#2f6fd8')
+    }
+  },
+  ingot: (px) => {
+    const { put } = painters(px)
+    // A bar of iron, lit along its top.
+    for (let y = 6; y <= 11; y += 1) {
+      for (let x = 2 + (11 - y); x <= 13 - (y - 6); x += 1) put(x, y, y === 6 ? '#ffffff' : y < 9 ? '#d9dde5' : '#a9b0bd')
+    }
+    for (let x = 4; x <= 12; x += 1) put(x, 12, '#6b7280')
+  },
+  gem: (px) => {
+    const { put } = painters(px)
+    // A cut diamond.
+    for (let y = 3; y < 14; y += 1) {
+      const half = y < 7 ? (y - 3) * 1.6 + 2 : (13 - y) * 0.9 + 1
+      for (let x = Math.round(8 - half); x <= Math.round(7 + half); x += 1) put(x, y, y < 6 ? '#e8ffff' : (x + y) % 3 ? '#5fe8e0' : '#2fb8b0')
+    }
+    put(6, 5, '#ffffff')
+  },
+  pickaxe: (px, opts) => {
+    const { put } = painters(px)
+    const [head] = (TIERS[opts.tier] || TIERS.iron).map(hex)
+    for (let k = 0; k < 11; k += 1) put(2 + k, 13 - k, k % 2 ? '#8a5a2b' : '#6b4420')
+    // The head: a curved bar across the top of the haft.
+    for (const [x, y] of [[4, 3], [5, 2], [6, 2], [7, 2], [8, 2], [9, 3], [10, 4], [11, 5], [12, 6], [13, 7], [3, 4], [12, 8]]) put(x, y, head)
+    put(6, 3, darker(head, 0.75))
+    put(11, 6, darker(head, 0.75))
+  },
+  torch: (px) => {
+    const { put } = painters(px)
+    for (let k = 0; k < 9; k += 1) put(4 + k, 14 - k, k % 2 ? '#8a5a2b' : '#6b4420')
+    for (const [x, y, c] of [[12, 5, '#ffd23b'], [13, 4, '#fff3b0'], [12, 4, '#ffb347'], [13, 5, '#ff8a1a'], [14, 3, '#ff8a1a'], [12, 3, '#ff8a1a'], [13, 3, '#ffd23b'], [13, 2, '#d8431a'], [11, 4, '#d8431a']]) put(x, y, c)
+  },
+  campfire: (px) => {
+    const { put } = painters(px)
+    for (let x = 1; x < 15; x += 1) {
+      put(x, 13, x % 4 ? '#6b4420' : '#4a2f16')
+      put(x, 12, x % 3 ? '#8a5a2b' : '#6b4420')
+    }
+    for (const [x, y] of [[1, 14], [3, 14], [12, 14], [14, 14]]) put(x, y, '#9aa3b2')
+    for (let k = 0; k < 4; k += 1) {
+      const x = 4 + k * 2
+      for (let y = 0; y < 6 + (k % 2) * 2; y += 1) put(x + (y > 4 ? (k % 2 ? 1 : -1) : 0), 11 - y, y < 2 ? '#fff3b0' : y < 4 ? '#ffd23b' : y < 6 ? '#ff8a1a' : '#d8431a')
+    }
+  },
+  berry: (px) => {
+    const { disc, put } = painters(px)
+    // Three glowing berries on a sprig.
+    for (const [cx, cy] of [[5.5, 9.5], [10.5, 9], [8, 12.5]]) disc(cx, cy, 2.6, null, (x, y, d) => (d < 1 ? hex('#e8fff6') : x + y < cx + cy ? hex('#7dffd9') : hex('#1f9c85')))
+    for (const [x, y] of [[8, 3], [8, 4], [7, 5], [9, 5], [6, 6], [10, 6]]) put(x, y, '#3f9a35')
+    put(9, 2, '#5cd65c')
+    put(10, 2, '#5cd65c')
   },
   pearl: (px) => {
     const { disc, put } = painters(px)
     disc(8, 8, 4.6, null, (x, y, d) => (d < 2 ? hex('#7dffd9') : d < 3.4 ? hex('#1f9c85') : hex('#0d5c4f')))
     put(6, 6, '#e8fff9')
-  },
-  bread: (px) => {
-    const { put } = painters(px)
-    for (let y = 5; y <= 11; y += 1) {
-      for (let x = 2; x <= 13; x += 1) {
-        const e = ((x - 7.5) / 6) ** 2 + ((y - 8) / 3.6) ** 2
-        if (e <= 1) put(x, y, y < 8 ? (x % 4 === 1 ? '#f2d08a' : '#c98a3f') : '#a8692b')
-      }
-    }
   },
   gapple: (px) => {
     const { disc, put } = painters(px)
@@ -127,11 +249,6 @@ const SPRITES = {
     put(8, 2, '#8a5a2b')
     put(6, 9, '#ffffff')
   },
-  heart: (px) => {
-    const { put } = painters(px)
-    const rows = ['..xx...xx..', '.xxxx.xxxx.', 'xxoxxxxxxxx', 'xoxxxxxxxxx', 'xxxxxxxxxxx', '.xxxxxxxxx.', '..xxxxxxx..', '...xxxxx...', '....xxx....', '.....x.....']
-    rows.forEach((row, y) => [...row].forEach((ch, x) => ch !== '.' && put(x + 2, y + 3, ch === 'o' ? '#ffd0d8' : y > 5 ? '#b3122c' : '#ff2f55')))
-  },
   fist: () => {},
 }
 
@@ -148,8 +265,8 @@ function spriteFor(id, skin = 'classic') {
   return px
 }
 
-export const isBlockItem = (id) => ITEMS[id]?.kind === 'block' || ITEMS[id]?.kind === 'tnt'
-export const blockOfItem = (id) => (ITEMS[id]?.kind === 'tnt' ? B.TNT : ITEMS[id]?.block)
+export const isBlockItem = (id) => ITEMS[id]?.kind === 'block' && !ITEMS[id].sprite
+export const blockOfItem = (id) => (ITEMS[id]?.kind === 'crystal' ? B.CRYSTAL : ITEMS[id]?.block)
 
 // --- Icons ------------------------------------------------------------------------------
 

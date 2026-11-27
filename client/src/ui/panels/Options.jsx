@@ -13,7 +13,7 @@ import { t } from '../i18n'
 /** What each graphics level means, for the settings buttons. */
 const GRAPHICS = {
   LOW: { label: 'LOW', color: '#3a8f5c', blurb: 'Fastest. Short view, no particles. Best for phones.' },
-  MEDIUM: { label: 'MID', color: '#3a6fd8', blurb: 'Particles, glowing lava, more clouds, smoother edges.' },
+  MEDIUM: { label: 'MID', color: '#3a6fd8', blurb: 'Particles, hit effects, more clouds, smoother edges.' },
   HIGH: { label: 'HIGH', color: '#a24ad8', blurb: 'Farthest view and sharpest picture. Strong PCs.' },
 }
 
@@ -76,7 +76,7 @@ export function SettingsPanel() {
         </Button>,
       )}
       {row(
-        t('Camera in rounds'),
+        t('Camera in fights'),
         <Button
           color="#4b5563"
           style={{ padding: `${u(4)} ${u(14)}`, fontSize: u(16) }}
@@ -102,7 +102,7 @@ export function SettingsPanel() {
         </Button>,
       )}
       <div className="txt-o" style={{ fontSize: u(14), color: '#bdb3e0', marginTop: u(8) }}>
-        Keys: WASD move · Space jump · Shift sneak · Ctrl / double-tap W sprint · 1-9 or wheel pick a slot · V camera · E open a case
+        Keys: WASD move · Space jump · Shift / double-tap W sprint · C sneak · 1-9 or wheel pick a slot · V camera · E open a case
       </div>
     </div>
   )

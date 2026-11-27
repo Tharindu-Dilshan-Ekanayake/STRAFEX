@@ -30,7 +30,7 @@ import { normalizeProfile } from '../../shared/logic.js'
 
 const DB_PATH = process.env.DB_PATH || fileURLToPath(new URL('../data/lucky.db', import.meta.url))
 
-const BOARDS = { wins: 'wins', kills: 'kills', games: 'games', playtime: 'playtime' }
+const BOARDS = { wins: 'wins', kills: 'kills', games: 'games', playtime: 'playtime', hits: 'hits' }
 
 const leaderboardFields = (profile) => ({
   name: profile.name,
@@ -38,6 +38,7 @@ const leaderboardFields = (profile) => ({
   kills: profile.kills,
   games: profile.games,
   playtime: profile.stats.playtime,
+  hits: profile.stats.hits || 0,
   updatedAt: profile.lastSeen,
 })
 
@@ -193,11 +194,14 @@ async function openSqlite(path) {
     );
     CREATE INDEX IF NOT EXISTS events_at ON events (at DESC);
   `)
-  // Files from before guest carry-over lack the column.
-  if (!db.prepare('PRAGMA table_info(profiles)').all().some((c) => c.name === 'carried_to')) {
-    db.exec('ALTER TABLE profiles ADD COLUMN carried_to TEXT')
+  // Files from before guest carry-over (or the Hits board) lack the column.
+  const cols = db.prepare('PRAGMA table_info(profiles)').all()
+  if (!cols.some((c) => c.name === 'carried_to')) db.exec('ALTER TABLE profiles ADD COLUMN carried_to TEXT')
+  if (!cols.some((c) => c.name === 'hits')) {
+    db.exec('ALTER TABLE profiles ADD COLUMN hits INTEGER NOT NULL DEFAULT 0')
+    db.exec('CREATE INDEX IF NOT EXISTS profiles_hits ON profiles (hits DESC)')
   }
-  const columns = { wins: 'wins', kills: 'kills', games: 'games', playtime: 'playtime' }
+  const columns = { wins: 'wins', kills: 'kills', games: 'games', playtime: 'playtime', hits: 'hits' }
 
   // One process owns this file, so `owner` has nothing to guard against here.
   return {
@@ -217,13 +221,13 @@ async function openSqlite(path) {
     async save(profile) {
       const f = leaderboardFields(profile)
       db.prepare(
-        `INSERT INTO profiles (id, name, data, wins, kills, games, playtime, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO profiles (id, name, data, wins, kills, games, playtime, hits, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name, data = excluded.data, wins = excluded.wins,
            kills = excluded.kills, games = excluded.games,
-           playtime = excluded.playtime, updated_at = excluded.updated_at`,
-      ).run(profile.id, f.name, JSON.stringify(profile), f.wins, f.kills, f.games, f.playtime, f.updatedAt)
+           playtime = excluded.playtime, hits = excluded.hits, updated_at = excluded.updated_at`,
+      ).run(profile.id, f.name, JSON.stringify(profile), f.wins, f.kills, f.games, f.playtime, f.hits, f.updatedAt)
       return true
     },
     async top(limit) {
@@ -245,9 +249,9 @@ async function openSqlite(path) {
       // Synchronous, so nothing can come between the checks above and these two writes.
       db.prepare('UPDATE profiles SET carried_to = ? WHERE id = ?').run(accountId, guestId)
       db.prepare(
-        `INSERT INTO profiles (id, name, data, wins, kills, games, playtime, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(accountId, f.name, JSON.stringify(profile), f.wins, f.kills, f.games, f.playtime, f.updatedAt)
+        `INSERT INTO profiles (id, name, data, wins, kills, games, playtime, hits, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(accountId, f.name, JSON.stringify(profile), f.wins, f.kills, f.games, f.playtime, f.hits, f.updatedAt)
       return true
     },
     async recordGem(grant) {

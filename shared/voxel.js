@@ -45,6 +45,30 @@ export const B = {
   WOOL_YELLOW: 34,
   WATER: 35,
   QUARTZ: 36,
+  OBSIDIAN: 37,
+  CRYSTAL: 38,
+  CORESTONE: 39,
+  CLAY_ORANGE: 40,
+  CLAY_RED: 41,
+  MOSSY_BRICKS: 42,
+  SLATE: 43,
+  JUMP_PAD: 44,
+  AZURE: 45,
+  FINISH: 46,
+  HAY: 47,
+  MUSHROOM: 48,
+  LANTERN: 49,
+  FIRE: 50,
+  // Flowing water, one block further from its source each level (51 = 1 ... 57 = 7).
+  FLOW_1: 51,
+  FLOW_7: 57,
+  LOOT_CHEST: 58,
+  BERRY_BUSH: 59,
+  TORCH: 60,
+  CAMPFIRE: 61,
+  IRON_ORE: 62,
+  DIAMOND_ORE: 63,
+  CRAFTING_TABLE: 64,
 }
 
 /**
@@ -102,9 +126,59 @@ BLOCKS[B.TALL_GRASS] = def('Tall Grass', 'tall_grass', 0, null, { solid: false, 
 BLOCKS[B.ORE] = def('Gem Ore', 'ore', 1.6, 'stone_bricks')
 BLOCKS[B.WATER] = def('Water', 'water', Infinity, null, { solid: false })
 BLOCKS[B.QUARTZ] = def('Quartz', ['quartz_top', 'quartz', 'quartz_top'], 0.9, 'stone_bricks')
+/** Blast-proof: crystals sit on it, explosions leave it standing. */
+BLOCKS[B.OBSIDIAN] = def('Obsidian', 'obsidian', 5, 'obsidian')
+/** A blast crystal: breaks at a touch and explodes (host.js). */
+BLOCKS[B.CRYSTAL] = def('Blast Crystal', 'crystal', 0, null, { render: 'cutout', glow: true, crystal: true })
+/** Arena floors and world bottoms: nothing breaks it. */
+BLOCKS[B.CORESTONE] = def('Corestone', 'corestone', Infinity, null)
+BLOCKS[B.CLAY_ORANGE] = def('Orange Clay', 'clay_orange', 1, 'sandstone')
+BLOCKS[B.CLAY_RED] = def('Red Clay', 'clay_red', 1, 'sandstone')
+BLOCKS[B.MOSSY_BRICKS] = def('Mossy Bricks', 'mossy_bricks', 1.2, 'stone_bricks')
+BLOCKS[B.SLATE] = def('Slate', 'slate', 1.5, 'stone_bricks')
+/** Step on it and you're thrown high into the air (physics.js). */
+BLOCKS[B.JUMP_PAD] = def('Jump Pad', ['pad_top', 'pad_side', 'pad_side'], Infinity, null, { pad: true })
+/** Polished blue stone for statues and trim. */
+BLOCKS[B.AZURE] = def('Azure Block', 'azure', 1.5, 'stone_bricks')
+/** The parkour's finish line. */
+BLOCKS[B.FINISH] = def('Finish Plate', ['finish_top', 'gold', 'gold'], Infinity, null, { glow: true })
+BLOCKS[B.HAY] = def('Hay Bale', ['hay_top', 'hay_side', 'hay_top'], 0.5, 'planks')
+/** A giant mushroom's cap: red with white spots. */
+BLOCKS[B.MUSHROOM] = def('Mushroom Cap', 'mushroom', 0.4, null)
+BLOCKS[B.LANTERN] = def('Lantern', ['lantern_top', 'lantern', 'lantern_top'], 0.4, null, { glow: true })
+// Flames where a fire arrow landed: walk through them and you burn. Burns out by itself.
+BLOCKS[B.FIRE] = def('Fire', 'fire', 0, null, { solid: false, render: 'cross', glow: true })
+// Flowing water: falls, then spreads up to 7 blocks from its source (host.js settles it).
+for (let id = B.FLOW_1; id <= B.FLOW_7; id += 1) BLOCKS[id] = def('Flowing Water', 'water', Infinity, null, { solid: false })
+
+// Loot chests in Spirelands: right click (or hit) one for random gear; it fills up again later.
+BLOCKS[B.LOOT_CHEST] = def('Loot Chest', ['chest_top', 'chest_side', 'chest_top'], Infinity, null)
+// Jump berry bushes in Spirelands: break one for berries (eat them: jump sky-high a while).
+BLOCKS[B.BERRY_BUSH] = def('Jump Berry Bush', 'berry_bush', 0.15, 'jump_berry', { solid: false, render: 'cross' })
+// Made from wood (crafting): a torch lights a little round it; a campfire lights a lot, and
+// warms whoever sits by it (slow healing) - but don't stand in it.
+BLOCKS[B.TORCH] = def('Torch', 'torch', 0, 'torch', { solid: false, render: 'cross', glow: true, light: 7 })
+BLOCKS[B.CAMPFIRE] = def('Campfire', 'campfire', 0.4, 'campfire', { solid: false, render: 'cross', glow: true, light: 10 })
+// Spirelands' resources: iron in the stone (and round the caves), diamonds deep down. A
+// crafting table is where kit gear is upgraded and new weapons made.
+BLOCKS[B.IRON_ORE] = def('Iron Ore', 'iron_ore', 2.2, 'iron')
+BLOCKS[B.DIAMOND_ORE] = def('Diamond Ore', 'diamond_ore', 3.2, 'diamond')
+BLOCKS[B.CRAFTING_TABLE] = def('Crafting Table', ['table_top', 'table_side', 'planks'], 1, 'crafting_table')
+// How far the other glowing blocks light the dark (in blocks; night only).
+BLOCKS[B.LANTERN].light = 8
+BLOCKS[B.LAMP].light = 8
+BLOCKS[B.FIRE].light = 5
+
+/** Water of any kind: a source (still water) or flowing. */
+export const isWater = (id) => id === B.WATER || (id >= B.FLOW_1 && id <= B.FLOW_7)
+/** How far water is from its source: 0 for a source, 1-7 flowing, -1 not water. */
+export const waterLevel = (id) => (id === B.WATER ? 0 : id >= B.FLOW_1 && id <= B.FLOW_7 ? id - B.FLOW_1 + 1 : -1)
+/** The flowing-water block `level` (1-7) blocks from its source. */
+export const flowBlock = (level) => B.FLOW_1 + level - 1
 
 export const isSolidBlock = (id) => Boolean(BLOCKS[id]?.solid)
 export const isLucky = (id) => Boolean(BLOCKS[id]?.lucky)
+export const isCrystal = (id) => Boolean(BLOCKS[id]?.crystal)
 
 /** A box of blocks, `sx` x `sy` x `sz`, one byte each; y is the slowest axis. */
 export class VoxelWorld {
@@ -113,6 +187,16 @@ export class VoxelWorld {
     this.sy = sy
     this.sz = sz
     this.data = data || new Uint8Array(sx * sy * sz)
+    /**
+     * A world that fills its box (Spirelands): nothing ever sees past its bottom or its
+     * outer sides, so the mesher draws no faces there. Physics is unaffected.
+     */
+    this.sealed = false
+    /**
+     * A world with an open sea: the water's surface at this height is drawn as one plane
+     * to the horizon (Environment.jsx), not block by block. -1: none.
+     */
+    this.seaLevel = -1
   }
 
   inBounds(x, y, z) {
@@ -138,6 +222,7 @@ export class VoxelWorld {
   }
 
   isSolid(x, y, z) {
+    if (this.sealed && (x < 0 || z < 0 || x >= this.sx || z >= this.sz)) return true
     return isSolidBlock(this.get(x, y, z))
   }
 
@@ -148,7 +233,10 @@ export class VoxelWorld {
   }
 
   clone() {
-    return new VoxelWorld(this.sx, this.sy, this.sz, this.data.slice())
+    const w = new VoxelWorld(this.sx, this.sy, this.sz, this.data.slice())
+    w.sealed = this.sealed
+    w.seaLevel = this.seaLevel
+    return w
   }
 }
 

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { ROUND } from '../../shared/balance.js'
+import { DUEL } from '../../shared/balance.js'
 import { GameHost } from '../../shared/host.js'
-import { ISLAND_TOP } from '../../shared/maps.js'
+import { ARENA_FLOOR } from '../../shared/maps.js'
 import { checkMove, createMoveState } from '../../shared/movecheck.js'
 import { createBody, stepBody } from '../../shared/physics.js'
 import { mulberry32 } from '../../shared/rng.js'
@@ -76,20 +76,23 @@ test('movement checks catch speed hacks, flying and walking through walls', () =
 test('the host puts a cheating player back and ignores their stale reports', () => {
   let t = 1_000_000
   const sent = []
-  const host = new GameHost({ send: (cid, type, payload) => sent.push({ type, payload }), now: () => t, random: mulberry32(3), log: () => {} })
+  const host = new GameHost({ duelBots: true, send: (cid, type, payload) => sent.push({ type, payload }), now: () => t, random: mulberry32(3), log: () => {} })
   host.join('p1', 'Runner')
-  for (let i = 0; i < ROUND.intermissionMs + ROUND.cagesMs + 2000; i += 50) {
+  host.message('p1', 'queue', { mode: 'sword' })
+  for (let i = 0; i < DUEL.soloBotMs + DUEL.voteMs + DUEL.countdownMs + 2000; i += 50) {
     t += 50
     host.tick(0.05)
   }
-  assert.equal(host.phase, 'fight')
   const me = host.entOf('p1')
-  const s = host.match.spawns[me.island]
-  // Standing on the island, well past the spawn teleport's grace.
-  Object.assign(me, { x: s.x + 0.5, y: ISLAND_TOP + 1, z: s.z + 0.5, posAt: t, tpGrace: 0 })
+  const arena = host.arenas.get(me.arena)
+  assert.equal(arena.phase, 'fight')
+  const c = arena.spawns[0]
+  // Standing on the arena floor at the spawn, well past the spawn teleport's grace.
+  Object.assign(me, { x: c.x, y: ARENA_FLOOR + 1, z: c.z, posAt: t, tpGrace: 0, awaitTp: null })
+  me.mv.groundAt = t
   t += 50
   host.message('p1', 'pos', { x: me.x + 0.25, y: me.y, z: me.z })
-  assert.ok(Math.abs(me.x - (s.x + 0.75)) < 1e-6, 'a normal step is accepted')
+  assert.ok(Math.abs(me.x - (c.x + 0.25)) < 1e-6, 'a normal step is accepted')
   // A 30-block jump: refused, corrected.
   const before = { x: me.x, z: me.z }
   t += 50

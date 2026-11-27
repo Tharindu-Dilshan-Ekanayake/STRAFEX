@@ -13,14 +13,24 @@ export const QUALITY_LEVELS = ['LOW', 'MEDIUM', 'HIGH']
 export const PRESETS = {
   LOW: {
     dpr: 1,
-    antialias: false,
+    /**
+     * Hardware multisampling, even on LOW: no extra pass (on phones' tile GPUs it is
+     * resolved on-chip, nearly free), and blocks' edges stop looking jagged.
+     */
+    antialias: true,
     /** No realtime shadows on any preset: terrain shading is baked into the blocks. */
     shadows: 'none',
     particles: false,
-    /** Sparkles over lucky blocks. */
+    /** Most player figures drawn at once (a full lobby or Spirelands: the nearest). */
+    maxFigures: 10,
+    /** Sparkle effects (unused by STRAFEX: kept so old saved settings stay valid). */
     sparkles: false,
-    viewDistance: 130,
-    fogNear: 45,
+    /** Leaves and grass sway in the wind (a few shader instructions, no extra draws). */
+    foliageSway: false,
+    /** Strength of the terrain's colour grade (free: part of the terrain shader). */
+    colorGrade: 1,
+    viewDistance: 72,
+    fogNear: 28,
     cloudCount: 10,
     /** Max side of any generated texture. */
     maxTexture: 512,
@@ -28,11 +38,18 @@ export const PRESETS = {
     remoteDrawDistance: 110,
     /**
      * Characters drawn as their Bloxity avatar (you included; real players first, then
-     * the nearest); the rest blocky. A round has at most 8 fighters, so even on LOW
-     * everyone you can see is their avatar, near or far.
+     * the nearest); the rest blocky. A duel is two, so everyone you fight is their
+     * avatar; in a packed Spirelands every player drawn is too, while the frame stays
+     * under drawBudget (past it the farthest are the light blocky figure).
      */
-    avatarCount: 8,
+    avatarCount: 11,
+    /** Draw calls a frame may use (the avatar count gives way to stay under it). */
+    drawBudget: 76,
     botAvatars: true,
+    /** Bots drawn as Bloxity avatars, on top of avatarCount (every bot in Spirelands). */
+    botAvatarCount: 9,
+    /** ...within this many blocks (farther bots are the light blocky figure). */
+    botAvatarDistance: 110,
     /** No avatar beyond this (blocks): as far as other players are drawn at all. */
     avatarDistance: 110,
     /** Avatars are posed every frame within this, every other frame within the next, then every third. */
@@ -46,14 +63,22 @@ export const PRESETS = {
     antialias: true,
     shadows: 'none',
     particles: true,
+    maxFigures: 18,
     sparkles: true,
-    viewDistance: 180,
+    foliageSway: true,
+    colorGrade: 1,
+    viewDistance: 170,
     fogNear: 70,
     cloudCount: 18,
     maxTexture: 1024,
-    remoteDrawDistance: 150,
-    avatarCount: 10,
+    remoteDrawDistance: 140,
+    avatarCount: 15,
+    drawBudget: 134,
     botAvatars: true,
+    /** Bots drawn as Bloxity avatars, on top of avatarCount (every bot in Spirelands). */
+    botAvatarCount: 9,
+    /** ...within this many blocks (farther bots are the light blocky figure). */
+    botAvatarDistance: 150,
     avatarDistance: 150,
     avatarPoseFull: 22,
     avatarPoseHalf: 60,
@@ -65,14 +90,22 @@ export const PRESETS = {
     antialias: true,
     shadows: 'none',
     particles: true,
+    maxFigures: 24,
     sparkles: true,
-    viewDistance: 240,
-    fogNear: 100,
-    cloudCount: 26,
+    foliageSway: true,
+    colorGrade: 1,
+    viewDistance: 260,
+    fogNear: 120,
+    cloudCount: 40,
     maxTexture: 1024,
-    remoteDrawDistance: 200,
-    avatarCount: 12,
+    remoteDrawDistance: 140,
+    avatarCount: 19,
+    drawBudget: 138,
     botAvatars: true,
+    /** Bots drawn as Bloxity avatars, on top of avatarCount (every bot in Spirelands). */
+    botAvatarCount: 9,
+    /** ...within this many blocks (farther bots are the light blocky figure). */
+    botAvatarDistance: 200,
     avatarDistance: 200,
     avatarPoseFull: 30,
     avatarPoseHalf: 80,
@@ -119,7 +152,9 @@ export const DEFAULT_LEVEL = 'LOW'
 function detectLevel() {
   if (typeof navigator === 'undefined') return DEFAULT_LEVEL
   const cores = navigator.hardwareConcurrency || 0
-  return isMobileDevice() || cores <= 4 ? 'LOW' : 'MEDIUM'
+  // Everyone starts on LOW (smooth on any device); MEDIUM and HIGH are a pick in Settings.
+  void cores
+  return 'LOW'
 }
 
 const initialLevel = readSaved() || detectLevel()
@@ -176,6 +211,13 @@ export const useQuality = create((set, get) => ({
     if (renderStep + 1 < RENDER_SCALES.length) {
       console.info(`[quality] FPS under budget, rendering at ${RENDER_SCALES[renderStep + 1] * 100}%`)
       set({ renderStep: renderStep + 1 })
+      return
+    }
+    // Still too slow at the lowest resolution (a very weak GPU): edge smoothing off - it
+    // costs the most per pixel. The 3D view is rebuilt once for it.
+    if (!manual && get().antialias) {
+      console.info('[quality] FPS under budget at the lowest resolution: antialiasing off')
+      set((s) => ({ antialias: false, rebuild: s.rebuild + 1 }))
     }
   },
 
