@@ -367,3 +367,22 @@ test('upgrades: at a crafting table, mined iron and diamonds make better gear; a
   assert.equal(breakSeconds(2.2, mineSpeed('iron_pickaxe', 2.2)), 2.2 / 3)
   assert.equal(mineSpeed('iron_pickaxe', 0.5), 1)
 })
+
+test('bots wear random Bloxity skins (whole outfits), so they look different', async () => {
+  const { BOT_SKINS } = await import('../../shared/balance.js')
+  const h = makeHost()
+  const { host } = h
+  host.join('a', 'Ann')
+  host.message('a', 'ffa', {})
+  host.message('a', 'kit', { mode: 'sword' })
+  h.tick(1500)
+  const bots = [...host.ents.values()].filter((e) => e.bot)
+  assert.ok(bots.length >= 5)
+  const skins = bots.map((b) => JSON.parse(b.look).equipped.skinId)
+  for (const id of skins) assert.ok(Number(id) >= 0 && Number(id) < BOT_SKINS)
+  assert.ok(new Set(skins).size >= 3, `varied outfits (${skins.join(', ')})`)
+  // Everyone sees them in the roster.
+  h.tick(400)
+  const roster = h.sent.filter((m) => m.type === 'roster').at(-1).payload.list
+  assert.ok(roster.filter((e) => e.bot).every((e) => e.look.includes('skinId')))
+})

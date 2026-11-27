@@ -29,8 +29,8 @@ export const PRESETS = {
     foliageSway: false,
     /** Strength of the terrain's colour grade (free: part of the terrain shader). */
     colorGrade: 1,
-    viewDistance: 88,
-    fogNear: 34,
+    viewDistance: 72,
+    fogNear: 28,
     cloudCount: 10,
     /** Max side of any generated texture. */
     maxTexture: 512,
@@ -39,10 +39,17 @@ export const PRESETS = {
     /**
      * Characters drawn as their Bloxity avatar (you included; real players first, then
      * the nearest); the rest blocky. A duel is two, so everyone you fight is their
-     * avatar; in a packed Spirelands the nearest four are (keeps phones in budget).
+     * avatar; in a packed Spirelands every player drawn is too, while the frame stays
+     * under drawBudget (past it the farthest are the light blocky figure).
      */
-    avatarCount: 4,
+    avatarCount: 11,
+    /** Draw calls a frame may use (the avatar count gives way to stay under it). */
+    drawBudget: 76,
     botAvatars: true,
+    /** Bots drawn as Bloxity avatars, on top of avatarCount (every bot in Spirelands). */
+    botAvatarCount: 9,
+    /** ...within this many blocks (farther bots are the light blocky figure). */
+    botAvatarDistance: 110,
     /** No avatar beyond this (blocks): as far as other players are drawn at all. */
     avatarDistance: 110,
     /** Avatars are posed every frame within this, every other frame within the next, then every third. */
@@ -65,8 +72,13 @@ export const PRESETS = {
     cloudCount: 18,
     maxTexture: 1024,
     remoteDrawDistance: 140,
-    avatarCount: 10,
+    avatarCount: 15,
+    drawBudget: 134,
     botAvatars: true,
+    /** Bots drawn as Bloxity avatars, on top of avatarCount (every bot in Spirelands). */
+    botAvatarCount: 9,
+    /** ...within this many blocks (farther bots are the light blocky figure). */
+    botAvatarDistance: 150,
     avatarDistance: 150,
     avatarPoseFull: 22,
     avatarPoseHalf: 60,
@@ -87,8 +99,13 @@ export const PRESETS = {
     cloudCount: 40,
     maxTexture: 1024,
     remoteDrawDistance: 140,
-    avatarCount: 12,
+    avatarCount: 19,
+    drawBudget: 138,
     botAvatars: true,
+    /** Bots drawn as Bloxity avatars, on top of avatarCount (every bot in Spirelands). */
+    botAvatarCount: 9,
+    /** ...within this many blocks (farther bots are the light blocky figure). */
+    botAvatarDistance: 200,
     avatarDistance: 200,
     avatarPoseFull: 30,
     avatarPoseHalf: 80,
@@ -135,7 +152,9 @@ export const DEFAULT_LEVEL = 'LOW'
 function detectLevel() {
   if (typeof navigator === 'undefined') return DEFAULT_LEVEL
   const cores = navigator.hardwareConcurrency || 0
-  return isMobileDevice() || cores <= 4 ? 'LOW' : 'MEDIUM'
+  // Everyone starts on LOW (smooth on any device); MEDIUM and HIGH are a pick in Settings.
+  void cores
+  return 'LOW'
 }
 
 const initialLevel = readSaved() || detectLevel()

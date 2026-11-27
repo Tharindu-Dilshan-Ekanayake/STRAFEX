@@ -5,6 +5,7 @@ import {
   armorReduce,
   BOT_LEVELS,
   BOT_NAMES,
+  BOT_SKINS,
   BOUNTY_STREAK,
   breakSeconds,
   CAMPFIRE,
@@ -571,6 +572,8 @@ export class GameHost {
     const capes = ['none', 'none', 'crimson', 'ocean', 'leaf', 'checker', 'pixel', 'galaxy']
     const bot = this.makeEnt(eid, name, { bot: true, cape: capes[Math.floor(this.random() * capes.length)], level: 2 + ((eid * 7) % 30), team })
     bot.kit = mode
+    // A random Bloxity outfit, so no two bots look alike.
+    bot.look = JSON.stringify({ equipped: { skinId: String(Math.floor(this.random() * BOT_SKINS)) }, proportions: {} })
     this.ents.set(eid, bot)
     return bot
   }

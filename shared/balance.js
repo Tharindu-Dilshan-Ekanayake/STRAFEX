@@ -241,6 +241,12 @@ export const LOOT = {
   ],
 }
 
+/**
+ * Bots wear a random Bloxity skin: a whole outfit (clothes and skin tone) from the avatar
+ * CDN's skins/0.png ... skins/108.png.
+ */
+export const BOT_SKINS = 109
+
 /** Armour tiers, worst to best (crafting only ever upgrades). */
 export const ARMOR_RANK = { none: 0, iron: 1, diamond: 2, cindersteel: 3 }
 /** A crafting table within this many blocks counts as "at" one. */

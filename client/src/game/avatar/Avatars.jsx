@@ -11,6 +11,7 @@ import ErrorBoundary from '../../ui/ErrorBoundary'
 import { getGame } from '../../store/game'
 import { getQuality } from '../../store/quality'
 import { itemModel } from '../art/items'
+import { frameStats } from '../perf'
 import { runtime } from '../runtime'
 import BloxityAvatar from './BloxityAvatar'
 import { avatarShown } from './state'
@@ -51,35 +52,67 @@ export default function Avatars() {
 
   useEffect(() => {
     let lastKey = ''
+    /**
+     * How many avatars there may be right now: as many as the preset allows, unless the
+     * last frames went over the preset's draw-call budget (a crowd of players with many
+     * accessories) - then the farthest fall back to the light blocky figure until there's
+     * room again. A step every refresh at most, and back up only after a while, so it
+     * never flickers.
+     */
+    let cap = Infinity
+    let raisedAt = 0
     /** eids that have an avatar now: kept while they stay fairly near (building an
      * avatar is the expensive part, so slots don't flip as people move about). */
     let members = new Set()
     const refresh = () => {
       const q = getQuality()
-      const slotsFree = Math.max(0, q.avatarCount - 1)
       const b = runtime.player.body
-      // Real players before bots, then nearest first; bots only where the preset allows.
+      const calls = frameStats.calls
+      const budget = q.drawBudget || 140
+      const wanted = Math.max(0, q.avatarCount - 1) + (q.botAvatarCount ?? 9)
+      if (cap > wanted) cap = wanted
+      // Over budget: drop as many avatars as it takes (each is about three draws).
+      if (calls > budget && cap > 3) cap = Math.max(3, cap - Math.max(1, Math.ceil((calls - budget) / 3)))
+      else if (calls < budget - 14 && cap < wanted && performance.now() - raisedAt > 2000) {
+        cap += 1
+        raisedAt = performance.now()
+      }
+      // Real players and bots each have their own avatar slots: real players up to the
+      // preset's avatarCount (you included), and every bot nearby too (bots only fill
+      // Spirelands while few real players are in, so there are never many).
       const ranked = [...runtime.remotes.values()]
         .map((r) => ({ r, d: Math.hypot(r.x - b.x, r.z - b.z) }))
         .filter(({ r, d }) => d <= q.avatarDistance && (q.botAvatars || !r.bot))
-        .sort((a, c) => (a.r.bot ? 1 : 0) - (c.r.bot ? 1 : 0) || a.d - c.d)
-      const keepRank = slotsFree + 2
+        .sort((a, c) => a.d - c.d)
       const next = new Set()
-      ranked.forEach(({ r }, i) => {
-        if (members.has(r.eid) && i < keepRank && next.size < slotsFree) next.add(r.eid)
-      })
       // Building an avatar is the expensive part: at most one new one per refresh, so
       // walking into a crowd never builds several in the same frame (a hitch).
       let added = 0
-      for (const { r } of ranked) {
-        if (next.size >= slotsFree) break
-        if (next.has(r.eid)) continue
-        if (!members.has(r.eid)) {
-          if (added >= 1) continue
-          added += 1
+      const fill = (list, slots) => {
+        let used = 0
+        // Keep who already has one while they stay among the nearest.
+        list.forEach(({ r }, i) => {
+          if (members.has(r.eid) && i < slots + 2 && used < slots) {
+            next.add(r.eid)
+            used += 1
+          }
+        })
+        for (const { r } of list) {
+          if (used >= slots) break
+          if (next.has(r.eid)) continue
+          if (!members.has(r.eid)) {
+            if (added >= 1) continue
+            added += 1
+          }
+          next.add(r.eid)
+          used += 1
         }
-        next.add(r.eid)
       }
+      // Real players first, nearest first; then bots - within what the budget allows.
+      const realSlots = Math.min(Math.max(0, q.avatarCount - 1), cap)
+      fill(ranked.filter(({ r }) => !r.bot), realSlots)
+      const usedReal = [...next].length
+      fill(ranked.filter(({ r, d }) => r.bot && d <= (q.botAvatarDistance ?? q.avatarDistance)), Math.min(q.botAvatarCount ?? 9, Math.max(0, cap - usedReal)))
       members = next
       const list = ranked
         .filter(({ r }) => next.has(r.eid))
